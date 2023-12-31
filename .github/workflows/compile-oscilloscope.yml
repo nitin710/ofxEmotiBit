@@ -1,0 +1,21 @@
+name: compile-latest-emotibit-oscilloscope
+run-name: compiling emotibit oscilloscope
+on: [push]
+jobs:
+  ChangeDirAndPull:
+    runs-on: self-hosted
+    steps:
+      - name: change-directory
+        working-directory: /home/cfl/dev/emotibit/software/CI_testing/of_v0.11.0_linux64gcc6_release/addons/ofxEmotiBit
+        run: |
+          pwd
+          echo "the commit that dispatched this job-- ${GITHUB_SHA}"
+          git checkout ${GITHUB_SHA}
+          echo "print latest commit number"
+          git log -1
+          echo "directory list"
+          ls
+          cd /EmotiBitOscilloscope
+          make
+      - run: echo "🍏 This job's status is ${{ job.status }}."
+
