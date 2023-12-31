@@ -11,6 +11,7 @@ jobs:
           pwd
           echo "the commit that dispatched this job-- ${GITHUB_SHA}"
           git checkout master
+          git pull
           git checkout ${GITHUB_SHA}
           echo "print latest commit number"
           git log -1
