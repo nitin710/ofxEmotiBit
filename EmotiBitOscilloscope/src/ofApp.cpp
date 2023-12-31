@@ -4,7 +4,6 @@
 
 //--------------------------------------------------------------
 void ofApp::setup() {
-	int something
 	ofLogToConsole();
 #ifdef TARGET_MAC_OS
     ofSetDataPathRoot("../Resources/");
