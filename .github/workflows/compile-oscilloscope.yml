@@ -5,7 +5,7 @@ jobs:
   ChangeDirAndPull:
     runs-on: self-hosted
     steps:
-      - name: change-directory
+      - name: compile emotibitOscilloscope
         working-directory: /home/cfl/dev/emotibit/software/CI_testing/of_v0.11.0_linux64gcc6_release/addons/ofxEmotiBit
         run: |
           pwd
@@ -15,7 +15,7 @@ jobs:
           git log -1
           echo "directory list"
           ls
-          cd /EmotiBitOscilloscope
+          cd EmotiBitOscilloscope
           make
       - run: echo "🍏 This job's status is ${{ job.status }}."
 
