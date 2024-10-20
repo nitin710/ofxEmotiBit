@@ -11,9 +11,10 @@ jobs:
       - name: create stage-release
         working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
         run: |
-          ls -al EmotiBitOscilloscope
+          ls -al EmotiBitOscilloscope/bin
+          la -al
           mkdir -p stageRelease/EmotiBitSoftware-macos
-          ls -al EmotiBitOscilloscope
+          ls -al
           mv EmotiBitOscilloscope/bin/EmotiBitOscilloscope-Debug stageRelease/EmotiBitSoftware-macos
       - name: upload
         uses: actions/upload-artifact@v4
