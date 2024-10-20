@@ -7,11 +7,10 @@
 void ofApp::setup() {
 	ofLogToConsole();
 	ofSetLogLevel(OF_LOG_VERBOSE);
-#ifdef TARGET_MAC_OS
+#ifdef TARGET_OSX
     ofSetDataPathRoot("../Resources/");
-    cout<<"Changed the data pathroot for Release"<<endl;
+    cout<<"Datapath: Resources"<<endl;
 #endif
-	writeOfxEmotiBitVersionFile();
 	ofSetWindowTitle("EmotiBit Data Parser (v" + ofxEmotiBitVersion + ")");
 
 	ofBackground(255, 255, 255);
@@ -24,7 +23,7 @@ void ofApp::setup() {
 	int guiYPos = 20;
 	int guiWidth = ofGetWindowWidth();
 	int guiPosInc = guiWidth + 1;
-	guiPanels.resize(1);
+	//guiPanels.resize(1);  // This fails in OF v0.11.2 with "attempting to reference a deleted function" error
 	guiPanels.at(0).setDefaultWidth(guiWidth);
 	guiPanels.at(0).setup("startRecording","junk.xml", guiXPos, -guiYPos);
 	guiPanels.at(0).add(processStatus.setup("Status", GUI_STATUS_IDLE));
@@ -728,6 +727,7 @@ std::time_t ofApp::getEpochTime(const std::wstring& dateTime)
 
 	// Create a tm object to store the parsed date and time.
 	std::tm dt;
+	dt.tm_isdst = -1;  // more information: https://en.cppreference.com/w/cpp/chrono/c/tm
 
 	// Now we read from buffer using get_time manipulator
 	// and formatting the input appropriately.

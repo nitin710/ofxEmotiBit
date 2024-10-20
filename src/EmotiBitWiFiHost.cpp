@@ -6,6 +6,10 @@ EmotiBitWiFiHost::~EmotiBitWiFiHost()
 	stopDataThread = true;
 	dataThread->join();
 	delete(dataThread);
+
+	stopAdvertisingThread = true;
+	advertisingThread->join();
+	delete(advertisingThread);
 }
 
 int8_t EmotiBitWiFiHost::begin()
@@ -43,7 +47,7 @@ int8_t EmotiBitWiFiHost::begin()
 	
 
 	dataThread = new std::thread(&EmotiBitWiFiHost::updateDataThread, this); 
-	advertizingTimer = ofGetElapsedTimeMillis();
+	advertisingThread = new std::thread(&EmotiBitWiFiHost::processAdvertisingThread, this);
 	return SUCCESS;
 }
 
@@ -73,13 +77,13 @@ bool EmotiBitWiFiHost::isInNetworkList(string ipAddress, vector<string> networkL
 }
 
 bool EmotiBitWiFiHost::isInNetworkExcludeList(string ipAddress) {
-	bool out = isInNetworkList(ipAddress, _hostAdvSettings.networkExcludeList);
+	bool out = isInNetworkList(ipAddress, _wifiHostSettings.networkExcludeList);
 	//cout << "Exclude " << ipAddress << ".* : " << out << endl;
 	return out;
 }
 
 bool EmotiBitWiFiHost::isInNetworkIncludeList(string ipAddress) {
-	bool out =  isInNetworkList(ipAddress, _hostAdvSettings.networkIncludeList);
+	bool out =  isInNetworkList(ipAddress, _wifiHostSettings.networkIncludeList);
 	//cout << "Include " << ipAddress << ".* : " << out << endl;
 	return out;
 }
@@ -119,42 +123,129 @@ void EmotiBitWiFiHost::getAvailableNetworks() {
 	}
 }
 
-void EmotiBitWiFiHost::pingAvailableNetworks() {
-	getAvailableNetworks(); // Check if new network appeared after oscilloscope was open (e.g. a mobile hotspot)
-	string packet = EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::HELLO_EMOTIBIT, advertisingPacketCounter++, "", 0); 
-	string ip;
+void EmotiBitWiFiHost::sendAdvertising() {
+	static bool emotibitsFound = false;
+	static bool startNewSend = true;
+	static bool sendInProgress = true;
+	static int unicastNetwork = 0;
+	static int broadcastNetwork = 0;
+	static int hostId = _wifiHostSettings.unicastIpRange.first; 
 
-	if (emotibitNetworks.size() == 0) { //initial search through all Networks
-		for (int network = 0; network < availableNetworks.size(); network++) {
-			if (_hostAdvSettings.enableBroadcast) {
-				advertisingCxn.SetEnableBroadcast(true);
-				ip = availableNetworks.at(network) + "." + ofToString(255);
-				advertisingCxn.Connect(ip.c_str(), advertisingPort);
-				advertisingCxn.Send(packet.c_str(), packet.length());
+	static uint64_t sendAdvertisingTimer = ofGetElapsedTimeMillis();
+	uint64_t sendAdvertisingTime = ofGetElapsedTimeMillis() - sendAdvertisingTimer;
+	if (sendAdvertisingTime >= _wifiHostSettings.sendAdvertisingInterval)
+	{
+		// Periodically start a new advertising send
+		sendAdvertisingTimer = ofGetElapsedTimeMillis();
+		startNewSend = true;
+		sendInProgress = true;
+	}
+
+	if (emotibitNetworks.size() > 0)
+	{
+		// only search all networks until an EmotiBit is found
+		// ToDo: consider permitting EmotiBits on multiple networks
+		emotibitsFound = true;
+	}
+
+	if (!emotibitsFound && startNewSend)
+	{
+		getAvailableNetworks(); // Check if new network appeared after oscilloscope was open (e.g. a mobile hotspot)
+	}
+
+	// **** Handle advertising sends ****
+	// Handle broadcast advertising
+	if (_wifiHostSettings.enableBroadcast && startNewSend) {
+		string broadcastIp;
+
+		if (emotibitsFound)
+		{
+			broadcastIp = emotibitNetworks.at(0) + "." + ofToString(255);
+		}
+		else
+		{
+			broadcastIp = availableNetworks.at(broadcastNetwork) + "." + ofToString(255);
+		}
+		ofLog(OF_LOG_VERBOSE) << "Sending advertising broadcast: " << sendAdvertisingTime;
+		ofLog(OF_LOG_VERBOSE) << broadcastIp;
+		startNewSend = false;
+		string packet = EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::HELLO_EMOTIBIT, advertisingPacketCounter++, "", 0);
+		advertisingCxn.SetEnableBroadcast(true);
+		advertisingCxn.Connect(broadcastIp.c_str(), advertisingPort);
+		advertisingCxn.Send(packet.c_str(), packet.length());
+
+		if (!emotibitsFound)
+		{
+			broadcastNetwork++;
+			if (broadcastNetwork >= availableNetworks.size())
+			{
+				broadcastNetwork = 0;
 			}
-			if (_hostAdvSettings.enableUnicast) {
-				advertisingCxn.SetEnableBroadcast(false);
-				for (int hostId = _hostAdvSettings.unicastIpRange.first; hostId <= _hostAdvSettings.unicastIpRange.second; hostId++) {
-					ip = availableNetworks.at(network) + "." + ofToString(hostId);
-					advertisingCxn.Connect(ip.c_str(), advertisingPort);
+		}
+
+		// skip unicast when broadcast sent to avoid network spam
+		return;
+	}
+	// Handle unicast advertising
+	if (_wifiHostSettings.enableUnicast && sendInProgress)
+	{
+		static uint64_t unicastLoopTimer = ofGetElapsedTimeMillis();
+		uint64_t unicastLoopTime = ofGetElapsedTimeMillis() - unicastLoopTimer;
+		// Limit the rate of unicast sending
+		if (unicastLoopTime >= _wifiHostSettings.unicastMinLoopDelay)
+		{
+			unicastLoopTimer = ofGetElapsedTimeMillis();
+			ofLog(OF_LOG_VERBOSE) << "Sending advertising unicast: " << unicastLoopTime;
+
+			for (uint32_t i = 0; i < _wifiHostSettings.nUnicastIpsPerLoop; i++)
+			{
+				string unicastIp;
+
+				if (emotibitsFound)
+				{
+					unicastIp = emotibitNetworks.at(0) + "." + ofToString(hostId);
+				}
+				else
+				{
+					unicastIp = availableNetworks.at(unicastNetwork) + "." + ofToString(hostId);
+				}
+
+				if (_wifiHostSettings.enableUnicast && sendInProgress)
+				{
+					ofLog(OF_LOG_VERBOSE) << unicastIp;
+					string packet = EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::HELLO_EMOTIBIT, advertisingPacketCounter++, "", 0);
+					advertisingCxn.SetEnableBroadcast(false);
+					advertisingCxn.Connect(unicastIp.c_str(), advertisingPort);
 					advertisingCxn.Send(packet.c_str(), packet.length());
 				}
-			}
-		}
-	} 
-	else { // Once an EmotiBit is found, advertising is directed at that network to avoid network spam
-		if (_hostAdvSettings.enableBroadcast) {
-			advertisingCxn.SetEnableBroadcast(true);
-			ip = emotibitNetworks.at(0) + "." + ofToString(255);
-			advertisingCxn.Connect(ip.c_str(), advertisingPort);
-			advertisingCxn.Send(packet.c_str(), packet.length());
-		}
-		if (_hostAdvSettings.enableUnicast) {
-			advertisingCxn.SetEnableBroadcast(false);
-			for (int hostId = _hostAdvSettings.unicastIpRange.first; hostId <= _hostAdvSettings.unicastIpRange.second; hostId++) {
-				ip = emotibitNetworks.at(0) + "." + ofToString(hostId);
-				advertisingCxn.Connect(ip.c_str(), advertisingPort);
-				advertisingCxn.Send(packet.c_str(), packet.length());
+
+				// Iterate IP Address
+				if (hostId < _wifiHostSettings.unicastIpRange.second)
+				{
+					hostId++;
+				}
+				else
+				{
+					// Reached end of unicastIpRange
+					hostId = _wifiHostSettings.unicastIpRange.first; // loop hostId back to beginning of range
+					if (emotibitsFound)
+					{
+						// finished a send of all IPs
+						sendInProgress = false;
+						break;
+					}
+					else
+					{
+						unicastNetwork++;
+						if (unicastNetwork >= availableNetworks.size())
+						{
+							// reached end of unicastIpRange for the last known network in list
+							sendInProgress = false;
+							unicastNetwork = 0;
+							break;
+						}
+					}
+				}
 			}
 		}
 	}
@@ -179,80 +270,111 @@ void EmotiBitWiFiHost::updateAdvertisingIpList(string ip) {
 	}
 }
 
+void EmotiBitWiFiHost::processAdvertisingThread()
+{
+	while (!stopAdvertisingThread)
+	{
+		vector<string> infoPackets;
+		processAdvertising(infoPackets);
+		// ToDo: Handle info packets with mode change information
+		threadSleepFor(_wifiHostSettings.advertisingThreadSleep);
+	}
+}
+
 int8_t EmotiBitWiFiHost::processAdvertising(vector<string> &infoPackets)
 {
 	const int maxSize = 32768;
 
-	//search for emotibits periodically
-	if (ofGetElapsedTimeMillis() - advertizingTimer > advertisingInterval) {
-		pingAvailableNetworks();
-		advertizingTimer = ofGetElapsedTimeMillis();
-	}
+	sendAdvertising();
 
-	// Receive advertising messages
-	static char udpMessage[maxSize];
-	int msgSize = advertisingCxn.Receive(udpMessage, maxSize);
-	if (msgSize > 0)
+	static uint64_t checkAdvertisingTimer = ofGetElapsedTimeMillis();
+	uint64_t checkAdvertisingTime = ofGetElapsedTimeMillis() - checkAdvertisingTimer;
+	if (checkAdvertisingTime >= _wifiHostSettings.checkAdvertisingInterval)
 	{
-		string message = udpMessage;
-		ofLogVerbose() << "Received: " << message;
+		checkAdvertisingTimer = ofGetElapsedTimeMillis();
+		ofLog(OF_LOG_VERBOSE) << "checkAdvertising: " << checkAdvertisingTime;
 
-		int port;
-		string ip;
-		advertisingCxn.GetRemoteAddr(ip, port);
-
-		vector<string> packets = ofSplitString(message, ofToString(EmotiBitPacket::PACKET_DELIMITER_CSV));
-		for (string packet : packets)
+		// Receive advertising messages
+		static char udpMessage[maxSize];
+		int msgSize = advertisingCxn.Receive(udpMessage, maxSize);
+		if (msgSize > 0)
 		{
-			EmotiBitPacket::Header header;
-			int16_t dataStartChar = EmotiBitPacket::getHeader(packet, header);
-			if (dataStartChar != 0)
+			string message = udpMessage;
+			ofLogVerbose() << "Received: " << message;
+
+			int port;
+			string ip;
+			advertisingCxn.GetRemoteAddr(ip, port);
+
+			vector<string> packets = ofSplitString(message, ofToString(EmotiBitPacket::PACKET_DELIMITER_CSV));
+			for (string packet : packets)
 			{
-				if (header.typeTag.compare(EmotiBitPacket::TypeTag::HELLO_HOST) == 0)
+				EmotiBitPacket::Header header;
+				int16_t dataStartChar = EmotiBitPacket::getHeader(packet, header);
+				if (dataStartChar != 0)
 				{
-					// HELLO_HOST
-					string value;
-					int16_t valuePos = EmotiBitPacket::getPacketKeyedValue(packet, EmotiBitPacket::PayloadLabel::DATA_PORT, value, dataStartChar);
-					if (valuePos > -1)
+					if (header.typeTag.compare(EmotiBitPacket::TypeTag::HELLO_HOST) == 0)
 					{
-						updateAdvertisingIpList(ip);
-						ofLogVerbose() << "EmotiBit: " << ip << ":" << port;
-						// Add ip address to our list
-						auto it = _emotibitIps.emplace(ip, EmotiBitStatus(ofToInt(value) == EmotiBitComms::EMOTIBIT_AVAILABLE));
-						if (!it.second)
-						{
-							// if it's not a new ip address, update the status
-							it.first->second = EmotiBitStatus(ofToInt(value) == EmotiBitComms::EMOTIBIT_AVAILABLE);
-						}
-					}
-				}
-				else if (header.typeTag.compare(EmotiBitPacket::TypeTag::PONG) == 0)
-				{
-					// PONG
-					if (ip.compare(connectedEmotibitIp) == 0)
-					{
+						// HELLO_HOST
 						string value;
+						string emotibitDeviceId = "";
 						int16_t valuePos = EmotiBitPacket::getPacketKeyedValue(packet, EmotiBitPacket::PayloadLabel::DATA_PORT, value, dataStartChar);
-						if (valuePos > -1 && ofToInt(value) == _dataPort)
+						if (valuePos > -1)
 						{
-							// Establish / maintain connected status
-							if (isStartingConnection)
+							updateAdvertisingIpList(ip);
+							ofLogVerbose() << "EmotiBit ip: " << ip << ":" << port;
+							int16_t deviceIdPos = -1;
+							deviceIdPos = EmotiBitPacket::getPacketKeyedValue(packet, EmotiBitPacket::PayloadLabel::DEVICE_ID, emotibitDeviceId, dataStartChar);
+							if (deviceIdPos > -1)
 							{
-								flushData();
-								_isConnected = true;
-								isStartingConnection = false;
-								//dataCxn.Create();
+								// found EmotiBitSrNum in HELLO_HOST message
+								// do nothing. emotibitDeviceid already updated.
+								ofLogVerbose() << "EmotiBit DeviceId: " << emotibitDeviceId;
 							}
-							if (_isConnected)
+							else
 							{
-								connectionTimer = ofGetElapsedTimeMillis();
+								emotibitDeviceId = ip;
+								ofLogVerbose() << "EmotiBit DeviceId: " << "DeviceId not available. using IP address as identifier";
+								// Add ip address to our list
+							}
+							discoveredEmotibitsMutex.lock();
+							auto it = _discoveredEmotibits.emplace(emotibitDeviceId, EmotibitInfo(ip, ofToInt(value) == EmotiBitComms::EMOTIBIT_AVAILABLE));
+							if (!it.second)
+							{
+								// if it's not a new ip address, update the status
+								it.first->second = EmotibitInfo(ip, ofToInt(value) == EmotiBitComms::EMOTIBIT_AVAILABLE);
+							}
+							discoveredEmotibitsMutex.unlock();
+						}
+					}
+					else if (header.typeTag.compare(EmotiBitPacket::TypeTag::PONG) == 0)
+					{
+						// PONG
+						if (ip.compare(connectedEmotibitIp) == 0)
+						{
+							string value;
+							int16_t valuePos = EmotiBitPacket::getPacketKeyedValue(packet, EmotiBitPacket::PayloadLabel::DATA_PORT, value, dataStartChar);
+							if (valuePos > -1 && ofToInt(value) == _dataPort)
+							{
+								// Establish / maintain connected status
+								if (isStartingConnection)
+								{
+									flushData();
+									_isConnected = true;
+									isStartingConnection = false;
+									//dataCxn.Create();
+								}
+								if (_isConnected)
+								{
+									connectionTimer = ofGetElapsedTimeMillis();
+								}
 							}
 						}
 					}
-				}
-				else
-				{
-					infoPackets.push_back(packet);
+					else
+					{
+						infoPackets.push_back(packet);
+					}
 				}
 			}
 		}
@@ -309,6 +431,7 @@ int8_t EmotiBitWiFiHost::processAdvertising(vector<string> &infoPackets)
 		{
 			isStartingConnection = false;
 			connectedEmotibitIp = "";
+			connectedEmotibitIdentifier = "";
 		}
 	}
 
@@ -322,7 +445,8 @@ int8_t EmotiBitWiFiHost::processAdvertising(vector<string> &infoPackets)
 	}
 
 	// Check to see if EmotiBit availability is stale or needs purging
-	for (auto it = _emotibitIps.begin(); it != _emotibitIps.end(); it++)
+	discoveredEmotibitsMutex.lock();
+	for (auto it = _discoveredEmotibits.begin(); it != _discoveredEmotibits.end(); it++)
 	{
 		if (ofGetElapsedTimeMillis() - it->second.lastSeen > availabilityTimeout)
 		{
@@ -338,7 +462,7 @@ int8_t EmotiBitWiFiHost::processAdvertising(vector<string> &infoPackets)
 		//	it++;
 		//}
 	}
-
+	discoveredEmotibitsMutex.unlock();
 	return SUCCESS;
 }
 
@@ -515,7 +639,24 @@ void EmotiBitWiFiHost::updateDataThread()
 	while (!stopDataThread)
 	{
 		updateData();
+		threadSleepFor(_wifiHostSettings.dataThreadSleep);
+	}
+}
+
+void EmotiBitWiFiHost::threadSleepFor(int sleepMicros)
+{
+	if (sleepMicros < 0)
+	{
+		//	do nothing, not even yield
+		//	WARNING: high spinlock potential
+	}
+	else if (sleepMicros == 0)
+	{
 		std::this_thread::yield();
+	}
+	else
+	{
+		std::this_thread::sleep_for(std::chrono::microseconds(sleepMicros));
 	}
 }
 
@@ -596,6 +737,7 @@ int8_t EmotiBitWiFiHost::disconnect()
 		//_startDataCxn(controlPort + 1);
 		dataCxnMutex.unlock();
 		connectedEmotibitIp = "";
+		connectedEmotibitIdentifier = "";
 		_isConnected = false;
 		isStartingConnection = false;
 	}
@@ -639,16 +781,20 @@ int8_t EmotiBitWiFiHost::flushData()
 }
 
 // Connecting is done asynchronously because attempts are repeated over UDP until connected
-int8_t EmotiBitWiFiHost::connect(string ip)
+int8_t EmotiBitWiFiHost::connect(string deviceId)
 {
 	if (!isStartingConnection && !_isConnected)
 	{
-		emotibitIpsMutex.lock();
+		discoveredEmotibitsMutex.lock();
+		string ip = _discoveredEmotibits[deviceId].ip;
+		bool isAvailable = _discoveredEmotibits[deviceId].isAvailable;
+		discoveredEmotibitsMutex.unlock();
 		try
 		{
-			if (ip.compare("") != 0 && _emotibitIps.at(ip).isAvailable)	// If the ip is on our list and available
+			if (ip.compare("") != 0 && isAvailable)	// If the ip is on our list and available
 			{
 				connectedEmotibitIp = ip;
+				connectedEmotibitIdentifier = deviceId;
 				isStartingConnection = true;
 				startCxnAbortTimer = ofGetElapsedTimeMillis();
 			}
@@ -657,32 +803,18 @@ int8_t EmotiBitWiFiHost::connect(string ip)
 			ofLogWarning() << "EmotiBit " << ip << " not found";
 			oor;
 		}
-		emotibitIpsMutex.unlock();
 	}
 
 	return SUCCESS;
 }
 
-int8_t EmotiBitWiFiHost::connect(uint8_t i)
+unordered_map<string, EmotibitInfo> EmotiBitWiFiHost::getdiscoveredEmotibits()
 {
-	int counter = 0;
-	for (auto it = _emotibitIps.begin(); it != _emotibitIps.end(); it++)
-	{
-		if (counter == i)
-		{
-			return connect(it->first);
-		}
-		counter++;
-	}
-	return FAIL;
-}
+	discoveredEmotibitsMutex.lock();
+	auto output = _discoveredEmotibits;
+	discoveredEmotibitsMutex.unlock();
 
-unordered_map<string, EmotiBitStatus> EmotiBitWiFiHost::getEmotiBitIPs()
-{
-	//emotibitIpsMutex.lock();
-	//unordered_map<string, bool> output;
-	return _emotibitIps;
-	//emotibitIpsMutex.unlock();
+	return output;
 }
 
 
@@ -777,27 +909,201 @@ bool EmotiBitWiFiHost::isConnected()
 	return _isConnected;
 }
 
-
-void EmotiBitWiFiHost::setAdvertTransSettings(bool enableBroadcast, bool enableUnicast, pair<int, int> unicastIpRange) {
-	_hostAdvSettings.enableBroadcast = enableBroadcast;
-	_hostAdvSettings.enableUnicast = enableUnicast;
-	_hostAdvSettings.unicastIpRange = unicastIpRange;
-}
-
-void EmotiBitWiFiHost::setNetworkIncludeList(vector<string> networkIncludeList) {
-	_hostAdvSettings.networkIncludeList = networkIncludeList;
-}
-
-void EmotiBitWiFiHost::setNetworkExcludeList(vector<string> networkExcludeList) {
-	_hostAdvSettings.networkExcludeList = networkExcludeList;
-}
-
-void EmotiBitWiFiHost::setHostAdvertisingSettings(HostAdvertisingSettings settings)
+void EmotiBitWiFiHost::setWifiHostSettings(WifiHostSettings settings)
 {
-	_hostAdvSettings = settings;
+	_wifiHostSettings = settings;
 }
 
-EmotiBitWiFiHost::HostAdvertisingSettings EmotiBitWiFiHost::getHostAdvertisingSettings()
+EmotiBitWiFiHost::WifiHostSettings EmotiBitWiFiHost::getWifiHostSettings()
 {
-	return _hostAdvSettings;
+	return _wifiHostSettings;
+}
+
+// saveEmotiBitCommSettings no longer matches settings and may or may not be used in the future
+// Code is left here commented out in case it might be useful at a later time
+//void ofApp::saveEmotiBitCommSettings(string settingsFilePath, bool absolute, bool pretty)
+//{
+//	// ToDo: find a nice home like EmotiBitFileIO.h/cpp
+//
+//	try
+//	{
+//		EmotiBitWiFiHost::WifiHostSettings settings = emotiBitWiFi.getWifiHostSettings();
+//		ofxJSONElement jsonSettings;
+//
+//		jsonSettings["wifi"]["advertising"]["transmission"]["broadcast"]["enabled"] = settings.enableBroadcast;
+//		jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["enabled"] = settings.enableUnicast;
+//		jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMin"] = settings.unicastIpRange.first;
+//		jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMax"] = settings.unicastIpRange.second;
+//
+//		int numIncludes = settings.networkIncludeList.size();
+//		for (int i = 0; i < numIncludes; i++)
+//		{
+//			jsonSettings["wifi"]["network"]["includeList"][i] = settings.networkIncludeList.at(i);
+//		}
+//
+//		int numExcludes = settings.networkExcludeList.size();
+//		for (int i = 0; i < numExcludes; i++)
+//		{
+//			jsonSettings["wifi"]["network"]["excludeList"][i] = settings.networkExcludeList.at(i);
+//		}
+//
+//		jsonSettings.save(ofToDataPath(settingsFilePath, absolute), pretty);
+//		ofLog(OF_LOG_NOTICE, "Saving " + settingsFilePath + ": \n" + jsonSettings.getRawString(true));
+//	}
+//	catch (exception e)
+//	{
+//		ofLog(OF_LOG_ERROR, "ERROR: Failed to save " + settingsFilePath);
+//	}
+//}
+
+void EmotiBitWiFiHost::parseCommSettings(string jsonStr)
+{
+	Json::Reader reader;
+	Json::Value jsonSettings;
+	
+	try
+	{
+		if (reader.parse(jsonStr, jsonSettings))
+		{
+			// ToDo: Move specifics of WiFi settings into EmotiBitWiFiHost
+			EmotiBitWiFiHost::WifiHostSettings settings;
+			EmotiBitWiFiHost::WifiHostSettings defaultSettings = getWifiHostSettings();// if setter is not called, getter returns default values
+
+			if (jsonSettings["wifi"]["advertising"].isMember("sendAdvertisingInterval_msec"))
+			{
+				settings.sendAdvertisingInterval = jsonSettings["wifi"]["advertising"]["sendAdvertisingInterval_msec"].asInt();
+			}
+			else
+			{
+				ofLogNotice("sendAdvertisingInterval_msec settings not found. Using default value");
+				settings.sendAdvertisingInterval = defaultSettings.sendAdvertisingInterval;
+			}
+			if (jsonSettings["wifi"]["advertising"].isMember("checkAdvertisingInterval_msec"))
+			{
+				settings.checkAdvertisingInterval = jsonSettings["wifi"]["advertising"]["checkAdvertisingInterval_msec"].asInt();
+			}
+			else
+			{
+				ofLogNotice("checkAdvertisingInterval_msec settings not found. Using default value");
+				settings.checkAdvertisingInterval = defaultSettings.checkAdvertisingInterval;
+			}
+			if (jsonSettings["wifi"]["advertising"].isMember("threadSleep_usec"))
+			{
+				settings.advertisingThreadSleep = jsonSettings["wifi"]["advertising"]["threadSleep_usec"].asInt();
+			}
+			else
+			{
+				ofLogNotice("advertising:threadSleep_usec settings not found. Using default value");
+				settings.advertisingThreadSleep = defaultSettings.advertisingThreadSleep;
+			}
+			if (jsonSettings["wifi"]["advertising"]["transmission"]["broadcast"].isMember("enabled"))
+			{
+				settings.enableBroadcast = jsonSettings["wifi"]["advertising"]["transmission"]["broadcast"]["enabled"].asBool();
+			}
+			else
+			{
+				ofLogNotice("Broadcast settings not found. Using default value");
+				settings.enableBroadcast = defaultSettings.enableBroadcast;
+			}
+			if (jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("enabled"))
+			{
+				settings.enableUnicast = jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["enabled"].asBool();
+			}
+			else
+			{
+				ofLogNotice("Unicast enable settings not found in. Using default value");
+				settings.enableUnicast = defaultSettings.enableUnicast;
+			}
+			if (jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("ipMin") &&
+				jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("ipMax"))
+			{
+				settings.unicastIpRange = make_pair(
+					jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMin"].asInt(),
+					jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMax"].asInt()
+				);
+			}
+			else
+			{
+				ofLogNotice("unicast ipRange settings not found. Using default value");
+				settings.unicastIpRange = defaultSettings.unicastIpRange;
+			}
+			if (jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("nUnicastIpsPerLoop"))
+			{
+				settings.nUnicastIpsPerLoop = jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["nUnicastIpsPerLoop"].asInt();
+			}
+			else
+			{
+				ofLogNotice("nUnicastIpsPerLoop settings not found in. Using default value");
+				settings.nUnicastIpsPerLoop = defaultSettings.nUnicastIpsPerLoop;
+			}
+			if (jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("unicastMinLoopDelay_msec"))
+			{
+				settings.unicastMinLoopDelay = jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["unicastMinLoopDelay_msec"].asInt();
+			}
+			else
+			{
+				ofLogNotice("unicastMinLoopDelay_msec settings not found. Using default value");
+				settings.unicastMinLoopDelay = defaultSettings.unicastMinLoopDelay;
+			}
+
+			if (jsonSettings["wifi"]["data"].isMember("threadSleep_usec"))
+			{
+				settings.dataThreadSleep = jsonSettings["wifi"]["data"]["threadSleep_usec"].asInt();
+			}
+			else
+			{
+				ofLogNotice("advertising:threadSleep_usec settings not found. Using default value");
+				settings.dataThreadSleep = defaultSettings.dataThreadSleep;
+			}
+
+			if (jsonSettings["wifi"]["network"].isMember("includeList"))
+			{
+				int numIncludes = jsonSettings["wifi"]["network"]["includeList"].size();
+				settings.networkIncludeList.clear();
+				for (int i = 0; i < numIncludes; i++)
+				{
+					settings.networkIncludeList.push_back(jsonSettings["wifi"]["network"]["includeList"][i].asString());
+				}
+			}
+			else
+			{
+				ofLogNotice("networkIncludeList settings not found. Using default value");
+				settings.networkIncludeList = defaultSettings.networkIncludeList;
+			}
+
+			if (jsonSettings["wifi"]["network"].isMember("excludeList"))
+			{
+				int numExcludes = jsonSettings["wifi"]["network"]["excludeList"].size();
+				settings.networkExcludeList.clear();
+				for (int i = 0; i < numExcludes; i++)
+				{
+					settings.networkExcludeList.push_back(jsonSettings["wifi"]["network"]["excludeList"][i].asString());
+				}
+			}
+			else
+			{
+				ofLogNotice("networkExcludeList settings not found. Using default value");
+				settings.networkExcludeList = defaultSettings.networkExcludeList;
+			}
+
+			setWifiHostSettings(settings);
+
+			ofLog(OF_LOG_NOTICE, "[EmotiBitWifiHost] CommSettings loaded: \n" + jsonStr);
+		}
+		else
+		{
+			ofLogError("[EmotiBitWifiHost] Failed to parse CommSettings");
+			ofLog(OF_LOG_NOTICE, "using default network parameters");
+			setWifiHostSettings(getWifiHostSettings()); // if setter is not called, getter returns default values
+			ofLog(OF_LOG_ERROR, "ERROR: Failed to load: \n" + jsonStr);
+
+		}
+	}
+	catch (exception e)
+	{
+		ofLogError("[EmotiBitWifiHost] CommSettings settings parse exception: ") << e.what();
+		ofLog(OF_LOG_NOTICE, "using default network parameters");
+		setWifiHostSettings(getWifiHostSettings()); // if setter is not called, getter returns default values
+		ofLog(OF_LOG_ERROR, "ERROR: Failed to load: \n" + jsonStr);
+	}
 }

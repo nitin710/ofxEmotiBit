@@ -1,6 +1,8 @@
 #include "ofApp.h"
 #include "ofxBiquadFilter.h"
 #include <algorithm>
+#include "EmotiBitOfUtils.h"
+
 
 //--------------------------------------------------------------
 void ofApp::setup() {
@@ -11,12 +13,13 @@ void ofApp::setup() {
 #endif
 	ofSetFrameRate(30);
 	ofBackground(255, 255, 255);
-	checkLatestSwVersion();
+	SoftwareVersionChecker::checkLatestVersion();
 	ofSetLogLevel(OF_LOG_NOTICE);
-	writeOfxEmotiBitVersionFile();
 	setTypeTagPlotAttributes();
-	//saveEmotiBitCommSettings();
-	loadEmotiBitCommSettings();
+
+	string commSettings = loadTextFile(commSettingsFile);
+	emotiBitWiFi.parseCommSettings(commSettings);
+
 	emotiBitWiFi.begin();	// Startup WiFi connectivity
 	timeWindowOnSetup = 10;  // set timeWindow for setup (in seconds)
 	setupGui();
@@ -34,30 +37,32 @@ void ofApp::setup() {
 	{
 		consoleLogger.startThread();
 	}
-	//Start up lsl connection on a seperate thread
-	if (!lslMarkerStreamInfo.name.empty())
+
+	// LSL marker setup
+	if (!commSettings.empty())
 	{
-		if (!lslMarkerStreamInfo.srcId.empty())
-		{
-			lslMarkerStream = std::make_shared<ofxLSL::Receiver<string>>(lslMarkerStreamInfo.name, lslMarkerStreamInfo.srcId);
-		}
-		else
-		{
-			lslMarkerStream = std::make_shared<ofxLSL::Receiver<string>>(lslMarkerStreamInfo.name);
-		}
+		emotibitLsl.addMarkerInput(commSettings);
 	}
+
 	// set log level to FATAL_ERROR to remove unrelated LSL error overflow in the console
 	ofSetLogLevel(OF_LOG_FATAL_ERROR);
+	//ofSetLogLevel(OF_LOG_VERBOSE);
 }
 
 //--------------------------------------------------------------
 void ofApp::update() {
-	vector<string> infoPackets;
-	emotiBitWiFi.processAdvertising(infoPackets);
-	// ToDo: Handle info packets with mode change information
-	if (!lslMarkerStreamInfo.name.empty())
+	static uint64_t updateTimer = ofGetElapsedTimeMillis();
+	ofLog(OF_LOG_VERBOSE) << "update(): " << ofGetElapsedTimeMillis() - updateTimer;
+	updateTimer = ofGetElapsedTimeMillis();
+
+	if (emotibitLsl.getNumMarkerInputs() > 0)
 	{
-		updateLsl();
+		vector<string> packets = emotibitLsl.createMarkerInputPackets(emotiBitWiFi.controlPacketCounter);
+		for (string packet : packets)
+		{
+			// cout << packet; // for debugging
+			emotiBitWiFi.sendControl(packet);
+		}
 	}
 	vector<string> dataPackets;
 	emotiBitWiFi.readData(dataPackets);
@@ -73,152 +78,7 @@ void ofApp::update() {
 	updateMenuButtons();
 }
 
-void ofApp::checkLatestSwVersion()
-{
-	bool newVersionAvailable = false;
-	// system call to curl
-	std::string latestReleaseUrl = "https://github.com/EmotiBit/ofxEmotiBit/releases/latest";
-	std::string latestReleaseApiRequest = "https://api.github.com/repos/EmotiBit/ofxEmotiBit/releases/latest";
-	std::string command = "curl " + latestReleaseApiRequest;
-	std::string response = "";
-	char buffer[200];
-	bool exceptionOccured = false;
-	try
-	{
-#if defined (TARGET_OSX) || defined (TARGET_LINUX)
-		FILE* pipe = popen(command.c_str(), "r"); // returns NULL on fail. refer: https://man7.org/linux/man-pages/man3/popen.3.html#RETURN_VALUE
-#else
-		FILE* pipe = _popen(command.c_str(), "r"); // returns NULL on fail. refer: https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/popen-wpopen?view=msvc-170#return-value
-#endif
-		if (pipe != NULL)
-		{
-			try
-			{
-				while (fgets(buffer, sizeof buffer, pipe) != NULL)
-				{
-					response += buffer;
-				}
-			}
-			catch (...) {
-				try
-				{
-	#if defined (TARGET_OSX) || defined (TARGET_LINUX)
-					pclose(pipe);
-	#else
-					_pclose(pipe);
-	#endif
-				}
-				catch (...)
-				{
-					ofLogError("Failed to close pipe");
-				}
-				ofLog(OF_LOG_ERROR, "An exception occured while executing curl");
-				exceptionOccured = true;
-			}
-			try
-			{
-	#if defined (TARGET_OSX) || defined (TARGET_LINUX)
-				pclose(pipe);
-	#else
-				_pclose(pipe);
-	#endif
-			}
-			catch (...)
-			{
-				ofLogError("Failed to close pipe");
-			}
-		}
-		else
-		{
-			ofLog(OF_LOG_ERROR, "Failed to check for latest version. Failed to open pipe");
-			exceptionOccured = true;
-		}
-	}
-	catch (...)
-	{
-		ofLogError("Failed to open pipe");
-		exceptionOccured = true;
-	}
-	try 
-	{
-		if (!exceptionOccured & response != "")
-		{
-			ofxJSONElement jsonResponse;
-			if (jsonResponse.parse(response))
-			{
-				//ofLog(OF_LOG_NOTICE, jsonResponse.getRawString(true));  // uncomment to print curl output
-				std::string latestAvailableVersion = jsonResponse["tag_name"].asString();
-				ofLogNotice("Latest version") << latestAvailableVersion;
-				int swVerPrefixLoc = latestAvailableVersion.find(SOFTWARE_VERSION_PREFIX);
-				if (swVerPrefixLoc != std::string::npos)
-				{
-					latestAvailableVersion.erase(swVerPrefixLoc, 1);  // remove leading version char "v"
-				}
-				// compare with ofxEmotiBitVersion
-				std::vector<std::string> latestVersionSplit = ofSplitString(latestAvailableVersion, ".");
-				std::vector<std::string> currentVersionSplit = ofSplitString(ofxEmotiBitVersion, ".");
-				int versionLength = latestVersionSplit.size() < currentVersionSplit.size() ? latestVersionSplit.size() : currentVersionSplit.size();
-				if (versionLength)
-				{
-					for (int i = 0; i < versionLength; i++)
-					{
-						int latest = ofToInt(latestVersionSplit.at(i));
-						int current = ofToInt(currentVersionSplit.at(i));
-						if (latest == current)
-						{
-							// need to check minor version
-							continue;
-						}
-						else if (latest < current)
-						{
-							// current version higher than latest available
-							break;
-						}
-						else // latest > current
-						{
-							// new version available
-							newVersionAvailable = true;
-							break;
-						}
-					}
-				}
-				else
-				{
-					ofLogError("Failed to parse version string");
-				}
-			}
-			else
-			{
-				ofLog(OF_LOG_ERROR, "unexpected curl response");
-			}
-			// If newer version available, display alert message
-			if (newVersionAvailable)
-			{
-				// create alert dialog box
-				ofSystemAlertDialog("A new version of EmotiBit Software is available!");
-				// open browser to latest version
-				try
-				{
-#ifdef TARGET_WIN32
-					std::string command = "start " + latestReleaseUrl;
-					system(command.c_str());
-#else
-					std::string command = "open " + latestReleaseUrl;
-					system(command.c_str());
-#endif
-				}
-				catch (...)
-				{
-					ofLogError("Failed to open browser");
-				}
-			}
-		}
-	}
-	catch (...)
-	{
-		ofLogError("An exception occured while checking latest version of EmotiBit software");
-	}
-}
+
 
 // ToDo: This function  should be removed once we complete our move to xmlFileSettings
 void ofApp::setTypeTagPlotAttributes()
@@ -249,9 +109,13 @@ void ofApp::setTypeTagPlotAttributes()
 
 void ofApp::resetScopePlot(int w, int s)
 {
+	// store the last set timeWindow before resetting
+	float lastTimeWindow = scopeWins.at(w).scopes.at(s).getTimeWindow();
 	scopeWins.at(w).scopes.at(s).clearData();
 	scopeWins.at(w).scopes.at(s).setup(timeWindowOnSetup, samplingFreqs.at(w).at(s), plotNames.at(w).at(s), plotColors.at(w).at(s),
 		0, 1);
+	// reset timeWindow to last set value
+	scopeWins.at(w).scopes.at(s).setTimeWindow(lastTimeWindow);
 }
 
 void ofApp::initMetaDataBuffers()
@@ -555,17 +419,16 @@ void ofApp::keyReleased(int key) {
 			}
 			else if (key == 'P')
 			{
-				string patchboardFile = "oscOutputSettings.xml";
-				oscPatchboard.loadFile(ofToDataPath(patchboardFile));
-				oscSender.clear();
-				try
+				if (startOscOutput())
 				{
-					cout << "Starting OSC: " << oscPatchboard.settings.output["ipAddress"] 
-						<< "," << ofToInt(oscPatchboard.settings.output["port"]) << endl;
-					oscSender.setup(oscPatchboard.settings.output["ipAddress"], ofToInt(oscPatchboard.settings.output["port"]));
 					sendOsc = true;
 				}
-				catch (exception e) {}
+				else
+				{
+					sendOsc = false;
+				}
+
+
 			}
 		}
 	}
@@ -609,11 +472,11 @@ void ofApp::dragEvent(ofDragInfo dragInfo) {
 
 void ofApp::recordButtonPressed(bool & recording) {
 	if (recording) {
-		string localTime = ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
+		string localTime = EmotiBit::ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
 		emotiBitWiFi.sendControl(EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::RECORD_BEGIN, emotiBitWiFi.controlPacketCounter++, localTime, 1));
 	}
 	else {
-		string localTime = ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
+		string localTime = EmotiBit::ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
 		emotiBitWiFi.sendControl(EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::RECORD_END, emotiBitWiFi.controlPacketCounter++, localTime, 1));
 	}
 }
@@ -622,7 +485,7 @@ void ofApp::sendExperimenterNoteButton() {
 	string note = userNote.getParameter().toString();
 	if (note.compare(GUI_STRING_EMPTY_USER_NOTE) != 0 && emotiBitWiFi.isConnected()) {
 		vector<string> payload;
-		payload.push_back(ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT));
+		payload.push_back(EmotiBit::ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT));
 		payload.push_back(note);
 		emotiBitWiFi.sendControl(EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::USER_NOTE, emotiBitWiFi.controlPacketCounter++, payload));
 		userNote.getParameter().fromString(GUI_STRING_EMPTY_USER_NOTE);
@@ -660,16 +523,16 @@ void ofApp::updateDeviceList()
 {
 	// Update add any missing EmotiBits on network to the device list
 	// ToDo: consider subtraction of EmotiBits that are stale
-	auto emotibitIps = emotiBitWiFi.getEmotiBitIPs();
-	for (auto it = emotibitIps.begin(); it != emotibitIps.end(); it++)
+	auto discoveredEmotibits = emotiBitWiFi.getdiscoveredEmotibits();
+	for (auto it = discoveredEmotibits.begin(); it != discoveredEmotibits.end(); it++)
 	{
-		string ip = it->first;
+		string deviceId = it->first;
 		bool available = it->second.isAvailable;
 		bool found = false;
 		// Search the GUI list to see if we're missing any EmotiBits
 		for (auto device = deviceList.begin(); device != deviceList.end(); device++)
 		{
-			if (ip.compare(device->getName()) == 0)
+			if (deviceId.compare(device->getName()) == 0)
 			{
 				found = true;
 				break;
@@ -677,10 +540,10 @@ void ofApp::updateDeviceList()
 		}
 		if (!found)
 		{
-			deviceList.emplace_back(ip, false);	// Add a new device (unchecked)
+			deviceList.emplace_back(deviceId, false);	// Add a new device (unchecked)
 			//deviceList.at(deviceList.size() - 1).addListener(this, &ofApp::deviceSelection);	// Attach a listener
 			guiPanels.at(guiPanelDevice).getGroup(GUI_DEVICE_GROUP_NAME).add(deviceList.at(deviceList.size() - 1));
-			if (emotibitIps.size() == 1 && deviceList.size() == 1)  // This is the first device in the list
+			if (discoveredEmotibits.size() == 1 && deviceList.size() == 1)  // This is the first device in the list
 			{
 				// There is one device on the network and it's the first device in the list
 				// connect
@@ -692,7 +555,8 @@ void ofApp::updateDeviceList()
 	// Update selected device
 	if (emotiBitWiFi.isConnected())
 	{
-		deviceSelected.setup(GUI_STRING_EMOTIBIT_SELECTED, emotiBitWiFi.connectedEmotibitIp);
+		// ToDo: Think about how to make the displayed text scalable to cover other info. about selected EmotiBit
+		deviceSelected.setup(GUI_STRING_EMOTIBIT_SELECTED, emotiBitWiFi.connectedEmotibitIdentifier);
 	}
 	else
 	{
@@ -703,12 +567,12 @@ void ofApp::updateDeviceList()
 	for (auto device = deviceList.begin(); device != deviceList.end(); device++)
 	{
 		// Update availability color
-		string ip = device->getName();
+		string deviceId = device->getName();
 		bool available = false;
-		try { available = emotibitIps.at(ip).isAvailable; }
+		try { available = discoveredEmotibits.at(deviceId).isAvailable; }
 		catch (const std::out_of_range& oor) { oor; } // ignore exception
 		ofColor textColor;
-		if (available || ip.compare(emotiBitWiFi.connectedEmotibitIp) == 0)
+		if (available || deviceId.compare(emotiBitWiFi.connectedEmotibitIdentifier) == 0)
 		{
 			textColor = deviceAvailableColor;
 		}
@@ -716,18 +580,58 @@ void ofApp::updateDeviceList()
 		{
 			textColor = notAvailableColor;
 		}
-		guiPanels.at(guiPanelDevice).getGroup(GUI_DEVICE_GROUP_NAME).getControl(ip)->setTextColor(textColor);
+		guiPanels.at(guiPanelDevice).getGroup(GUI_DEVICE_GROUP_NAME).getControl(deviceId)->setTextColor(textColor);
 
 		// Update device connection status checkbox
 		bool selected = device->get();
-		if (ip.compare(emotiBitWiFi.connectedEmotibitIp) == 0 && !selected)
+		if (deviceId.compare(emotiBitWiFi.connectedEmotibitIdentifier) == 0 && !selected)
 		{
 			// Connected to device -- checkbox needs to be checked
 			ofRemoveListener(deviceGroup.parameterChangedE(), this, &ofApp::deviceGroupSelection);
 			device->set(true);
 			ofAddListener(deviceGroup.parameterChangedE(), this, &ofApp::deviceGroupSelection);
+			if (sendLsl)
+			{
+				// Changing devices may require LSL stream setup
+				string sourceId = emotiBitWiFi.connectedEmotibitIdentifier;
+				if (!emotibitLsl.isDataStreamOutputSource(sourceId))
+				{
+					// A new sourceId needs to be added to LSL sender
+					if (lslSettings.empty())
+					{
+						cout << "Loading LSL settings from: " << lslOutputSettingsFile << endl;
+						emotibitLsl.clearDataStreamOutputs(); // clear the existing stream outputs when loading settings to avoid weird conflicts
+						lslSettings = loadTextFile(lslOutputSettingsFile);
+					}
+					string sourceId = emotiBitWiFi.connectedEmotibitIdentifier;
+					if (lslSettings.empty())
+					{
+						cout << "LSL settings not found: " << lslOutputSettingsFile << endl;
+						// ToDo: consider a graceful way to unmark LSL in output list
+						//sendDataList.at(j).set(false);
+						//sendLsl = false;
+					}
+					else if (sourceId.empty())
+					{
+						cout << "Select an EmotiBit to setup LSL streaming" << endl;
+					}
+					else if (!emotibitLsl.addDataStreamOutputs(lslSettings, sourceId) == EmotiBitLsl::ReturnCode::SUCCESS)
+					{
+						cout << "LSL output setup failed: " << emotibitLsl.getlastErrMsg() << endl;
+						// ToDo: consider a graceful way to unmark LSL in output list
+						//sendDataList.at(j).set(false);
+						//sendLsl = false;
+					}
+					else
+					{
+						cout << "Added LSL stream source: " << sourceId << endl;
+						cout << "Starting LSL streaming from: " << sourceId << endl;
+					}
+				}
+				else cout << "Starting LSL streaming from: " << sourceId << endl;
+			}
 		}
-		else if (ip.compare(emotiBitWiFi.connectedEmotibitIp) != 0 && selected)
+		else if (deviceId.compare(emotiBitWiFi.connectedEmotibitIdentifier) != 0 && selected)
 		{
 			// Not connected to device -- checkbox needs to be unchecked
 			ofRemoveListener(deviceGroup.parameterChangedE(), this, &ofApp::deviceGroupSelection);
@@ -758,7 +662,7 @@ void ofApp::powerModeSelection(ofAbstractParameter& mode)
 		}
 
 		string packet;
-		string localTime = ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
+		string localTime = EmotiBit::ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
 		if (mode.getName().compare(GUI_STRING_NORMAL_POWER) == 0)
 		{
 			_powerMode = PowerMode::NORMAL_POWER;
@@ -800,21 +704,21 @@ void ofApp::powerModeSelection(ofAbstractParameter& mode)
 
 void ofApp::deviceGroupSelection(ofAbstractParameter& device)
 {
-	string ip = device.getName();
+	string deviceId = device.getName();
+	auto discoveredEmotibits = emotiBitWiFi.getdiscoveredEmotibits();
 	bool selected = device.cast<bool>().get();
 	if (selected)
 	{
 		// device selected
-		auto emotibitIps = emotiBitWiFi.getEmotiBitIPs();
-		bool available = false;
-		try	{	available = emotibitIps.at(ip).isAvailable;	}
+				bool available = false;
+		try	{	available = discoveredEmotibits.at(deviceId).isAvailable;	}
 		catch (const std::out_of_range& oor) { oor; } // ignore exception
 		if (available)
 		{
 			// Only respond to available selections
-			if (ip.compare(emotiBitWiFi.connectedEmotibitIp) == 0)
+			if (deviceId.compare(emotiBitWiFi.connectedEmotibitIdentifier) == 0)
 			{
-				// We're already connected to the selected IP, so enjoy a cold beer
+				// We're already connected to the selected device, so enjoy a cold beer
 			}
 			else
 			{
@@ -829,7 +733,7 @@ void ofApp::deviceGroupSelection(ofAbstractParameter& device)
 					clearOscilloscopes(true);
 				}
 				// ToDo: consider if we need a delay here
-				emotiBitWiFi.connect(ip);
+				emotiBitWiFi.connect(deviceId);
 				_powerMode = PowerMode::LOW_POWER;
 				clearOscilloscopes(true);
 			}
@@ -838,7 +742,7 @@ void ofApp::deviceGroupSelection(ofAbstractParameter& device)
 	else	
 	{
 		// device unselected
-		if (emotiBitWiFi.connectedEmotibitIp.compare(ip) == 0)
+		if (emotiBitWiFi.connectedEmotibitIdentifier.compare(deviceId) == 0)
 		{
 			// The device we're connected to has been unchecked... disconnect
 			emotiBitWiFi.disconnect();
@@ -870,32 +774,82 @@ void ofApp::sendDataSelection(ofAbstractParameter& output) {
 		{
 			if (outputName.compare(sendDataOptions.at(j)) == 0)
 			{
+				// ToDo: Generalize output management
 				if (GUI_STRING_SEND_DATA_OSC.compare(sendDataOptions.at(j)) == 0)
 				{
 					if (selected)
 					{
-						string patchboardFile = "oscOutputSettings.xml";
-							oscPatchboard.loadFile(ofToDataPath(patchboardFile));
-							oscSender.clear();
-							try
+						if (startOscOutput())
 						{
-							cout << "Starting OSC: " << oscPatchboard.settings.output["ipAddress"]
-								<< "," << ofToInt(oscPatchboard.settings.output["port"]) << endl;
-								oscSender.setup(oscPatchboard.settings.output["ipAddress"], ofToInt(oscPatchboard.settings.output["port"]));
 							sendOsc = true;
-							
 						}
-						catch (exception e)
+						else
 						{
-							cout << "OSC output setup failed " << endl;
 							sendDataList.at(j).set(false);
 							sendOsc = false;
-						}
+						}		
 					}
 					else
 					{
 						sendOsc = false;
 					}
+				}
+				if (GUI_STRING_SEND_DATA_UDP.compare(sendDataOptions.at(j)) == 0)
+				{
+					if (selected)
+					{
+						if (startUdpOutput())
+						{
+							sendUdp = true;
+						}
+						else
+						{
+							sendDataList.at(j).set(false);
+							sendUdp = false;
+						}
+					}
+					else
+					{
+						sendUdp = false;
+					}
+				}
+				if (GUI_STRING_SEND_DATA_LSL.compare(sendDataOptions.at(j)) == 0)
+				{
+					if (selected)
+					{
+						// Clear and reload LSL settings whenever LSL output selected
+						emotibitLsl.clearDataStreamOutputs();
+						cout << "Loading LSL settings from: " << lslOutputSettingsFile << endl;
+						lslSettings = loadTextFile(lslOutputSettingsFile);
+						string sourceId = emotiBitWiFi.connectedEmotibitIdentifier;
+						if (lslSettings.empty())
+						{
+							cout << "LSL settings not found: " << lslOutputSettingsFile << endl;
+							// ToDo: consider whether auto-unchecking LSL box is the best UX
+							sendDataList.at(j).set(false);
+							sendLsl = false;
+						}
+						else if (sourceId.empty())
+						{
+							cout << "Select an EmotiBit to setup LSL streaming" << endl;
+							sendLsl = true;
+						}
+						else if (!emotibitLsl.addDataStreamOutputs(lslSettings, sourceId) == EmotiBitLsl::ReturnCode::SUCCESS)
+						{
+							cout << "LSL output setup failed: " << emotibitLsl.getlastErrMsg() << endl;
+							sendLsl = false;
+						}
+						else
+						{
+							sendLsl = true;
+							cout << "Starting LSL streaming from: " << sourceId << endl;
+						}
+					}
+					else
+					{
+						sendLsl = false;
+					}
+
 				}
 			}
 		}
@@ -945,31 +899,6 @@ void ofApp::sendDataSelection(ofAbstractParameter& output) {
 #endif
 }
 
-string ofApp::ofGetTimestampString(const string& timestampFormat) {
-	std::stringstream str;
-	auto now = std::chrono::system_clock::now();
-	auto t = std::chrono::system_clock::to_time_t(now);    std::chrono::duration<double> s = now - std::chrono::system_clock::from_time_t(t);
-	int us = s.count() * 1000000;
-	auto tm = *std::localtime(&t);
-	constexpr int bufsize = 256;
-	char buf[bufsize];
-
-	// Beware! an invalid timestamp string crashes windows apps.
-	// so we have to filter out %i (which is not supported by vs)
-	// earlier.
-	auto tmpTimestampFormat = timestampFormat;
-	ofStringReplace(tmpTimestampFormat, "%i", ofToString(us/1000, 3, '0'));
-	ofStringReplace(tmpTimestampFormat, "%f", ofToString(us, 6, '0'));
-
-	if (strftime(buf, bufsize, tmpTimestampFormat.c_str(), &tm) != 0) {
-		str << buf;
-	}
-	auto ret = str.str();
-
-
-	return ret;
-}
-
 void ofApp::processAperiodicData(std::string signalId, std::vector<float> data)
 {
 	std::vector<float> periodizedData; // cleared before update inside every update call
@@ -995,6 +924,10 @@ void ofApp::processAperiodicData(std::string signalId, std::vector<float> data)
 }
 
 void ofApp::processSlowResponseMessage(string packet) {
+	if (sendUdp) // Handle sending data to outputs
+	{
+		udpSender.Send(packet.c_str(), packet.length());
+	}
 	vector<string> splitPacket = ofSplitString(packet, ",");	// split data into separate value pairs
 	processSlowResponseMessage(splitPacket);
 }
@@ -1043,7 +976,7 @@ void ofApp::processSlowResponseMessage(vector<string> splitPacket)
 				// ToDo: Make it possible to send data types that aren't being plotted (e.g. EL, ER)
 				oscAddresses = oscPatchboard.patchcords[packetHeader.typeTag];
 				oscMessages.resize(oscAddresses.size());
-				for (auto a = 0; a < oscAddresses.size(); a++)
+				for (int a = 0; a < oscAddresses.size(); a++)
 				{
 					oscMessages.at(a).setAddress(oscAddresses.at(a));
 				}
@@ -1051,12 +984,20 @@ void ofApp::processSlowResponseMessage(vector<string> splitPacket)
 
 			for (int n = EmotiBitPacket::headerLength; n < splitPacket.size(); n++) 
 			{
-				// Data for plotting in the oscilloscope
 				data.at(p).emplace_back(ofToFloat(splitPacket.at(n))); 
+
+				if (sendLsl)
+				{
+					vector<float> lslSample(1); // data is passed into addSample as a vector of 1 datapoint/channel
+					lslSample.at(0) = data.at(p).back();
+					emotibitLsl.addSample(lslSample, packetHeader.typeTag, emotiBitWiFi.connectedEmotibitIdentifier);
+					//cout << packetHeader.typeTag << ":" << ofToString(data.at(p)) << ", ";
+				}
+				// Data for plotting in the oscilloscope
 
 				if (sendOsc) // Handle sending data to outputs
 				{
-					for (auto a = 0; a < oscMessages.size(); a++)
+					for (int a = 0; a < oscMessages.size(); a++)
 					{
 						oscMessages.at(a).addFloatArg(data.at(p).back());
 					}
@@ -1065,7 +1006,7 @@ void ofApp::processSlowResponseMessage(vector<string> splitPacket)
 
 			if (sendOsc)
 			{
-				for (auto a = 0; a < oscMessages.size(); a++)
+				for (int a = 0; a < oscMessages.size(); a++)
 				{
 					// ToDo: Consider using ofxOscBundle
 					oscSender.sendMessage(oscMessages.at(a));
@@ -1193,7 +1134,7 @@ void ofApp::setupGui()
 	int guiWidth = 220;
 	int guiPosInc = guiWidth + 1;
 	
-	guiPanels.resize(6);
+	//guiPanels.resize(6); // This fails in OF v0.11.2 with "attempting to reference a deleted function" error
 
 	// Device Menu
 	int p = 0;
@@ -1312,7 +1253,9 @@ void ofApp::setupGui()
 		//sendDataGroup.add(sendDataList.at(sendDataList.size() - 1));
 		guiPanels.at(guiPanelSendData).getGroup(GUI_OUTPUT_GROUP_NAME).add(sendDataList.at(sendDataList.size() - 1));
 		// Disable outputs until supporting code written
-		if (GUI_STRING_SEND_DATA_OSC.compare(sendDataOptions.at(j)) == 0)
+		if (GUI_STRING_SEND_DATA_OSC.compare(sendDataOptions.at(j)) == 0 
+			|| GUI_STRING_SEND_DATA_UDP.compare(sendDataOptions.at(j)) == 0
+			|| GUI_STRING_SEND_DATA_LSL.compare(sendDataOptions.at(j)) == 0)
 		{
 			sendDataDisabled.push_back(false);
 			guiPanels.at(guiPanelSendData).getGroup(GUI_OUTPUT_GROUP_NAME).getControl(sendDataOptions.at(j))->setTextColor(deviceAvailableColor);
@@ -1454,60 +1397,6 @@ void ofApp::setupOscilloscopes()
 	updatePlotAttributeLists();
 	updateTypeTagList();
 	initMetaDataBuffers();
-}
-
-void ofApp::updateLsl()
-{
-	if (lslMarkerStream->isConnected())
-	{
-		auto markerSamples = lslMarkerStream->flush();
-		if (markerSamples.size()) {
-			// for all samples received
-			for (int i = 0; i < markerSamples.size(); i++)
-			{
-				consoleOutput.lslMarkerCount++;
-				auto markerSample = markerSamples.at(i);
-				std::stringstream ss;
-				for (auto channel : markerSample->sample) {
-					ss << ofToString(channel) << EmotiBitPacket::PAYLOAD_DELIMITER;
-				}
-
-				vector<string> payload;
-
-				payload.clear();
-				payload.push_back(EmotiBitPacket::PayloadLabel::LSL_MARKER_RX_TIMESTAMP);
-				payload.push_back(ofToString(markerSample->timeStamp + markerSample->timeCorrection, 7));
-				payload.push_back(EmotiBitPacket::PayloadLabel::LSL_MARKER_SRC_TIMESTAMP);
-				payload.push_back(ofToString(markerSample->timeStamp, 7));
-				payload.push_back(EmotiBitPacket::PayloadLabel::LSL_LOCAL_CLOCK_TIMESTAMP);
-				payload.push_back(ofToString(lsl::local_clock(), 7));
-				payload.push_back(EmotiBitPacket::PayloadLabel::LSL_MARKER_DATA);
-				payload.push_back(ss.str());
-				string packet = EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::LSL_MARKER, emotiBitWiFi.controlPacketCounter++, payload);
-				emotiBitWiFi.sendControl(packet);
-
-				// ToDo: consider if we even need a marker sample to get cross domain points.
-				//		Can we just not do: LC = lsl::local_clock, and LM = lsl::local_clock() - timeCorretion()?
-				// send TX packet for LCxLM
-				payload.clear();
-				payload.push_back(ofToString(EmotiBitPacket::PayloadLabel::LSL_LOCAL_CLOCK_TIMESTAMP));
-				payload.push_back(ofToString(markerSample->timeStamp + markerSample->timeCorrection, 7));
-				payload.push_back(EmotiBitPacket::PayloadLabel::LSL_MARKER_SRC_TIMESTAMP);
-				payload.push_back(ofToString(markerSample->timeStamp, 7));
-				emotiBitWiFi.sendControl(EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::TIMESTAMP_CROSS_TIME, emotiBitWiFi.controlPacketCounter++, payload));
-
-				// ToDo: Consider if TIMESTAMP_CROSS_TIME packet sending needs to be in a different spot
-				double lsltime = lsl::local_clock();
-				string timestampLocal = ofGetTimestampString(EmotiBitPacket::TIMESTAMP_STRING_FORMAT);
-				payload.clear();
-				payload.push_back(ofToString(EmotiBitPacket::TypeTag::TIMESTAMP_LOCAL));
-				payload.push_back(timestampLocal);
-				payload.push_back(EmotiBitPacket::PayloadLabel::LSL_LOCAL_CLOCK_TIMESTAMP);
-				payload.push_back(ofToString(lsltime, 7));
-				emotiBitWiFi.sendControl(EmotiBitPacket::createPacket(EmotiBitPacket::TypeTag::TIMESTAMP_CROSS_TIME, emotiBitWiFi.controlPacketCounter++, payload));
-			}
-		}
-	}
 }
 
 void ofApp::clearOscilloscopes(bool connectedDeviceUpdated)
@@ -1678,7 +1567,11 @@ void ofApp::drawConsole()
 	}
 	else
 	{
-		if (_powerMode == PowerMode::LOW_POWER)
+		if (!emotiBitWiFi.isConnected())
+		{
+			_consoleString += "No EmotiBit selected";
+		}
+		else if (_powerMode == PowerMode::LOW_POWER)
 		{
 			_consoleString += "Low power mode";
 		}
@@ -1695,33 +1588,35 @@ void ofApp::drawConsole()
 			_consoleString += "Hibernating";
 		}
 	}
-	// ToDo: find a more elegant solution console output
-	// hanlde printing LSL details
-	if (!lslMarkerStreamInfo.name.empty())
+	// Handle printing LSL marker stream details
+	// ToDo: consider if there is a more elegant solution for console output
+	vector<EmotiBitLsl::MarkerStreamInfo> markerInputs = emotibitLsl.getMarkerStreamInfo();
+	if (markerInputs.size() > 0 && !markerInputs.at(0).name.empty())
 	{
-		if (consoleOutput.lslMarkerCount)
+		// ToDo: Handle more than one marker stream
+		if (markerInputs.at(0).rxCount > 0)
 		{
 			_consoleString += EmotiBitPacket::PAYLOAD_DELIMITER;
-			std::string updateStr = " LSL markers Received (" + JSON_SETTINGS_STRING_LSL_MARKER_INFO_NAME + ": " + lslMarkerStreamInfo.name;
-			if (!lslMarkerStreamInfo.srcId.empty())
+			std::string updateStr = " LSL markers Received (" + EmotiBitLsl::MARKER_INFO_NAME_LABEL + ": " + markerInputs.at(0).name;
+			if (!markerInputs.at(0).sourceId.empty())
 			{
 				updateStr += EmotiBitPacket::PAYLOAD_DELIMITER;
-				updateStr += (" " + JSON_SETTINGS_STRING_LSL_MARKER_INFO_SOURCE_ID + ": ");
-				updateStr += lslMarkerStreamInfo.srcId;
+				updateStr += (" " + EmotiBitLsl::MARKER_INFO_SOURCE_ID_LABEL + ": ");
+				updateStr += markerInputs.at(0).sourceId;
 			}
-			updateStr += ("): " + ofToString(consoleOutput.lslMarkerCount));
+			updateStr += ("): " + ofToString(markerInputs.at(0).rxCount));
 			_consoleString += updateStr;
 		}
 		else
 		{
 			_consoleString += EmotiBitPacket::PAYLOAD_DELIMITER;
 			std::string updateStr = "";
-			_consoleString += (" Searching for LSL stream:: " + JSON_SETTINGS_STRING_LSL_MARKER_INFO_NAME + ": " + lslMarkerStreamInfo.name);
-			if (!lslMarkerStreamInfo.srcId.empty())
+			_consoleString += (" Searching for LSL stream:: " + EmotiBitLsl::MARKER_INFO_NAME_LABEL + ": " + markerInputs.at(0).name);
+			if (!markerInputs.at(0).sourceId.empty())
 			{
 				updateStr += EmotiBitPacket::PAYLOAD_DELIMITER;
-				updateStr += (" " + JSON_SETTINGS_STRING_LSL_MARKER_INFO_SOURCE_ID + ": ");
-				updateStr += lslMarkerStreamInfo.srcId;
+				updateStr += (" " + EmotiBitLsl::MARKER_INFO_SOURCE_ID_LABEL + ": ");
+				updateStr += markerInputs.at(0).sourceId;
 			}
 			_consoleString += updateStr;
 		}
@@ -1828,148 +1723,84 @@ void ofApp::drawOscilloscopes()
 
 }
 
-void ofApp::saveEmotiBitCommSettings(string settingsFilePath, bool absolute, bool pretty)
+
+string ofApp::loadTextFile(string filePath)
 {
-	// ToDo: find a nice home like EmotiBitFileIO.h/cpp
-
-	try
+	ofFile commSettingsFile(ofToDataPath(filePath));
+	if (commSettingsFile.exists())
 	{
-		EmotiBitWiFiHost::HostAdvertisingSettings settings = emotiBitWiFi.getHostAdvertisingSettings();
-		ofxJSONElement jsonSettings;
-
-		jsonSettings["wifi"]["advertising"]["transmission"]["broadcast"]["enabled"] = settings.enableBroadcast;
-		jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["enabled"] = settings.enableUnicast;
-		jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMin"] = settings.unicastIpRange.first;
-		jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMax"] = settings.unicastIpRange.second;
-
-		int numIncludes = settings.networkIncludeList.size();
-		for (int i = 0; i < numIncludes; i++)
-		{
-			jsonSettings["wifi"]["network"]["includeList"][i] = settings.networkIncludeList.at(i);
-		}
-
-		int numExcludes = settings.networkExcludeList.size();
-		for (int i = 0; i < numExcludes; i++)
-		{
-			jsonSettings["wifi"]["network"]["excludeList"][i] = settings.networkExcludeList.at(i);
-		}
-
-		jsonSettings.save(ofToDataPath(settingsFilePath, absolute), pretty);
-		ofLog(OF_LOG_NOTICE, "Saving " + settingsFilePath + ": \n" + jsonSettings.getRawString(true));
+		ofBuffer b = commSettingsFile.readToBuffer();
+		string s = b.getText();
+		cout << s << endl;
+		return s;
 	}
-	catch (exception e)
+	else
 	{
-		ofLog(OF_LOG_ERROR, "ERROR: Failed to save " + settingsFilePath);
+		ofLog(OF_LOG_ERROR, "Error: file not found - " + filePath);
 	}
+	return "";
 }
 
-
-void ofApp::loadEmotiBitCommSettings(string settingsFilePath, bool absolute)
+bool ofApp::startOscOutput()
 {
-	ofxJSONElement jsonSettings;
+	oscPatchboard.loadFile(ofToDataPath(oscOutputSettingsFile));
+	oscSender.clear();
 	try
 	{
-		ofFile commSettingsFile(ofToDataPath(settingsFilePath));
-		if (commSettingsFile.exists())
+		string xml;
+		oscPatchboard.patchboard.copyXmlToString(xml);
+		cout << xml << endl;
+		string ipAddress = oscPatchboard.patchboard.getValue("patchboard:settings:output:ipAddress", "");
+		string port = oscPatchboard.patchboard.getValue("patchboard:settings:output:port", "");
+		if (ipAddress != "" && port != "")
 		{
-			// ToDo find a nice home like EmotiBitFileIO.h/cpp
-			EmotiBitWiFiHost::HostAdvertisingSettings settings;
-			EmotiBitWiFiHost::HostAdvertisingSettings defaultSettings = emotiBitWiFi.getHostAdvertisingSettings();// if setter is not called, getter returns default values
-			if (jsonSettings.open(ofToDataPath(settingsFilePath, absolute)))
-			{
-				if (jsonSettings["wifi"]["advertising"]["transmission"]["broadcast"].isMember("enabled"))
-				{
-					settings.enableBroadcast = jsonSettings["wifi"]["advertising"]["transmission"]["broadcast"]["enabled"].asBool();
-				}
-				else
-				{
-					ofLogNotice("Broadcast settings not found in ") <<  settingsFilePath + ".Using default value";
-					settings.enableBroadcast = defaultSettings.enableBroadcast;
-				}
-				if (jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("enabled"))
-				{
-					settings.enableUnicast = jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["enabled"].asBool();
-				}
-				else
-				{
-					ofLogNotice("Unicast enable settings not found in ") << settingsFilePath + ". Using default value";
-					settings.enableUnicast = defaultSettings.enableUnicast;
-				}
-				if (jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("ipMin") &&
-					jsonSettings["wifi"]["advertising"]["transmission"]["unicast"].isMember("ipMax"))
-				{
-					settings.unicastIpRange = make_pair(
-						jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMin"].asInt(),
-						jsonSettings["wifi"]["advertising"]["transmission"]["unicast"]["ipMax"].asInt()
-					);
-				}
-				else
-				{
-					ofLogNotice("unicast ipRange settings not found in ") << settingsFilePath + ". Using default value";
-					settings.unicastIpRange = defaultSettings.unicastIpRange;
-				}
-
-				if (jsonSettings["wifi"]["network"].isMember("includeList"))
-				{
-					int numIncludes = jsonSettings["wifi"]["network"]["includeList"].size();
-					settings.networkIncludeList.clear();
-					for (int i = 0; i < numIncludes; i++)
-					{
-						settings.networkIncludeList.push_back(jsonSettings["wifi"]["network"]["includeList"][i].asString());
-					}
-				}
-				else
-				{
-					ofLogNotice("networkIncludeList settings not found in ") << settingsFilePath + ". Using default value";
-					settings.networkIncludeList = defaultSettings.networkIncludeList;
-				}
-
-				if (jsonSettings["wifi"]["network"].isMember("excludeList"))
-				{
-					int numExcludes = jsonSettings["wifi"]["network"]["excludeList"].size();
-					settings.networkExcludeList.clear();
-					for (int i = 0; i < numExcludes; i++)
-					{
-						settings.networkExcludeList.push_back(jsonSettings["wifi"]["network"]["excludeList"][i].asString());
-					}
-				}
-				else
-				{
-					ofLogNotice("networkExcludeList settings not found in ") << settingsFilePath + ". Using default value";
-					settings.networkExcludeList = defaultSettings.networkExcludeList;
-				}
-
-				emotiBitWiFi.setHostAdvertisingSettings(settings);
-				
-				if (jsonSettings.isMember("lsl"))
-				{
-					if (jsonSettings["lsl"].isMember("marker"))
-					{
-						if (jsonSettings["lsl"]["marker"].isMember(JSON_SETTINGS_STRING_LSL_MARKER_INFO_NAME))
-							lslMarkerStreamInfo.name = jsonSettings["lsl"]["marker"][JSON_SETTINGS_STRING_LSL_MARKER_INFO_NAME].asString();
-						if (jsonSettings["lsl"]["marker"].isMember(JSON_SETTINGS_STRING_LSL_MARKER_INFO_SOURCE_ID))
-							lslMarkerStreamInfo.srcId = jsonSettings["lsl"]["marker"][JSON_SETTINGS_STRING_LSL_MARKER_INFO_SOURCE_ID].asString();
-						// Note: We don't have to include an "else" here because LSL is a very special feature, and it is not required to 
-						// crowd the console with warnings about this feature.
-					}
-				}
-				ofLog(OF_LOG_NOTICE, "Loaded " + settingsFilePath + ": \n" + jsonSettings.getRawString(true));
-			}
-			else
-			{
-				ofLog(OF_LOG_NOTICE, "Using default network parameters");
-				emotiBitWiFi.setHostAdvertisingSettings(emotiBitWiFi.getHostAdvertisingSettings()); // if setter is not called, getter returns default values
-			}
+			cout << "Starting OSC output: " << ipAddress << "," << ofToInt(port) << endl;
+			return oscSender.setup(ipAddress, ofToInt(port));
 		}
 		else
 		{
-			ofLogError("File does not exist at") << settingsFilePath;
-			ofLog(OF_LOG_NOTICE, "using default network parameters");
-			emotiBitWiFi.setHostAdvertisingSettings(emotiBitWiFi.getHostAdvertisingSettings()); // if setter is not called, getter returns default values
+			cout << "Starting OSC output failed -- ipAddress/port not valid: " << ipAddress << "/" << port << endl;
+			return false;
 		}
 	}
-	catch (exception e)
+	catch (exception e) 
 	{
-		ofLog(OF_LOG_ERROR, "ERROR: Failed to load " + settingsFilePath + ": \n" + jsonSettings.getRawString(true));
+		cout << "OSC output setup failed" << endl;
+		return false;
 	}
+
+	return false;
+}
+
+bool ofApp::startUdpOutput()
+{
+	udpPatchboard.loadFile(ofToDataPath(udpOutputSettingsFile));
+	try
+	{
+		string xml;
+		udpPatchboard.patchboard.copyXmlToString(xml);
+		cout << xml << endl;
+		string ipAddress = udpPatchboard.patchboard.getValue("patchboard:settings:output:ipAddress", "");
+		string port = udpPatchboard.patchboard.getValue("patchboard:settings:output:port", "");
+		if (ipAddress != "" && port != "")
+		{
+			cout << "Starting UDP output: " << ipAddress << "," << ofToInt(port) << endl;
+			ofxUDPSettings settings;
+			settings.sendTo(ipAddress.c_str(), ofToInt(port));
+			settings.blocking = false;
+			return udpSender.Setup(settings);
+		}
+		else
+		{
+			cout << "Starting UDP output failed -- ipAddress/port not valid: " << ipAddress << "/" << port << endl;
+			return false;
+		}
+	}
+	catch (exception e) 
+	{
+		cout << "UDP output setup failed" << endl;
+		return false;
+	}
+
+	return false;
 }

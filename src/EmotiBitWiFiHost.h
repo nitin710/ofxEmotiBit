@@ -16,36 +16,46 @@
 #include "EmotiBitPacket.h"
 #include "EmotiBitComms.h"
 #include "DoubleBuffer.h"
+#include "json/json.h"
 
 using namespace EmotiBit;
 
-class EmotiBitStatus
+class EmotibitInfo
 {
 public:
-	EmotiBitStatus(bool isAvailable = false, uint64_t lastSeen = ofGetElapsedTimeMillis()) :
-		isAvailable(isAvailable), lastSeen(lastSeen) {}
+	EmotibitInfo(string ip = "", bool isAvailable = false, uint64_t lastSeen = ofGetElapsedTimeMillis()) :
+		ip(ip), isAvailable(isAvailable), lastSeen(lastSeen) {}
+	string ip;
 	bool isAvailable;
 	uint64_t lastSeen;
+	// Additional parameters like Name, Fs etc can be stored in this struct
+	// ToDo: Consider if a copy/assignment constructor is needed
 };
 
 class EmotiBitWiFiHost
 {
 public:
 
-	struct HostAdvertisingSettings {
-		bool enableBroadcast = true;
-		bool enableUnicast = false;
+	struct WifiHostSettings {
+		int sendAdvertisingInterval = 1000; // msec interval between advertising blasts
+		int checkAdvertisingInterval = 100; // msec interval between checks for advertising replies
+		int advertisingThreadSleep = 0;	// usec duration to sleep between thread loops
+		int dataThreadSleep = 0;	// usec duration to sleep between thread loops
 
+		bool enableBroadcast = true;
+
+		bool enableUnicast = true;
 		pair<int, int> unicastIpRange = { 2, 254 };
+		int nUnicastIpsPerLoop = 1;
+		int unicastMinLoopDelay = 3;
 
 		vector<string> networkIncludeList = { "*.*.*.*" };
 		vector<string> networkExcludeList = { "" };
-	} _hostAdvSettings;
+	} _wifiHostSettings;
 
 	static const uint8_t SUCCESS = 0;
 	static const uint8_t FAIL = -1;
 
-	uint16_t advertisingInterval = 500; // Milliseconds between sending advertising messages
 	uint16_t startCxnInterval = 100;
 
 	ofxUDPManager advertisingCxn;
@@ -53,10 +63,11 @@ public:
 	ofxTCPServer controlCxn;
 
 	std::thread* dataThread;
+	std::thread* advertisingThread;
 
 	std::mutex controlCxnMutex;
 	std::mutex dataCxnMutex;
-	std::mutex emotibitIpsMutex;
+	std::mutex discoveredEmotibitsMutex;
 
 	uint16_t advertisingPort;
 	uint16_t _dataPort;
@@ -68,8 +79,11 @@ public:
 	bool enableBroadcast = false; 
 	uint64_t advertizingTimer;
 
-	unordered_map<string, EmotiBitStatus> _emotibitIps;	// list of EmotiBit IP addresses
+	unordered_map<string, EmotibitInfo> _discoveredEmotibits;	// list of EmotiBit IP addresses
 	string connectedEmotibitIp;
+	// ToDo: Find a scalable solution to store connected EmotiBit details.
+	// Ex. If we want to change the selected emotibit name to be displayed, instead of ID
+	string connectedEmotibitIdentifier;  //!< stores the ID of the connected EmotiBit 
 	bool _isConnected;
 	bool isStartingConnection;
 	uint16_t startCxnTimeout = 5000;	// milliseconds
@@ -87,16 +101,17 @@ public:
 	uint16_t availabilityTimeout = 5000;
 	uint16_t ipPurgeTimeout = 15000;
 
-    atomic_bool stopDataThread = {false};
+  atomic_bool stopDataThread = {false};
+	atomic_bool stopAdvertisingThread = { false };
 	uint16_t receivedDataPacketNumber = 60000;	// Tracks packet numbers (for multi-send). Starts at arbitrary large number.
 
 	~EmotiBitWiFiHost();
 	int8_t begin();
 	void getAvailableNetworks();
-	void pingAvailableNetworks();
+	void sendAdvertising();
 	void updateAdvertisingIpList(string ip); 
 	int8_t processAdvertising(vector<string> &infoPackets);
-	int8_t connect(string ip);
+	int8_t connect(string deviceId);
 	int8_t connect(uint8_t i);
 	int8_t disconnect();
 	int8_t sendControl(const string& packet);
@@ -107,9 +122,10 @@ public:
 	int8_t sendData(const string& packet);
 	void processRequestData(const string& packet, int16_t dataStartChar);
 	void updateDataThread();
+	void processAdvertisingThread();
 	int8_t flushData();
 	//int8_t sendUdp(WiFiUDP& udp, const String& message, const IPAddress& ip, const uint16_t& port);
-	unordered_map<string, EmotiBitStatus> getEmotiBitIPs();	// <IP address, availability to connect>
+	unordered_map<string, EmotibitInfo> getdiscoveredEmotibits();	// <device ID, device Information>
 	vector<string> getLocalIPs();
 	//string createPacket(string typeTag, string data = "", uint16_t dataLength = 0, uint8_t protocolVersion = 1, uint8_t dataReliability = 100);
 	//string createPacket(string typeTag, vector<string> data, uint8_t protocolVersion = 1, uint8_t dataReliability = 100);
@@ -138,21 +154,31 @@ public:
 	*/
 	bool isInNetworkList(string ipAddress, vector<string> networkList);
 
-	void setAdvertTransSettings(bool enableBroadcast, bool enableUnicast, pair<int, int> unicastIpRange);
-	void setNetworkIncludeList(vector<string> networkIncludeList);
-	void setNetworkExcludeList(vector<string> networkExcludeList);
+	/*!
+	@brief Parses EmotiBit host comm settings
+	@param jsonStr comm settings in JSON format
+	*/
+	void parseCommSettings(string jsonStr);
 
 	/*!
 	@brief Sets EmotiBit host advertising settings
 	@param settings
 	*/
-	void setHostAdvertisingSettings(HostAdvertisingSettings settings);
+	void setWifiHostSettings(WifiHostSettings settings);
 
 	/*!
 	@brief Gets EmotiBit host advertising settings
 	@return settings
 	*/
-	HostAdvertisingSettings getHostAdvertisingSettings();
+	WifiHostSettings getWifiHostSettings();
 
 	string ofGetTimestampString(const string& timestampFormat); // Adds %f for microseconds
+
+	/*!
+	@brief Handles sleeping or yeilding the the active thread
+	@param sleepMicros <0 does nothing, ==0 yeilds, >0 sleep_for
+	*/
+	void threadSleepFor(int sleepMicros);
 };
+
+

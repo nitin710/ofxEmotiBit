@@ -37,7 +37,7 @@
 #
 #   Note: Leave a leading space when adding list items with the += operator
 ################################################################################
-# PROJECT_EXTERNAL_SOURCE_PATHS = 
+PROJECT_EXTERNAL_SOURCE_PATHS=$(PROJECT_ROOT)/../../ofxOscilloscope/ofxPatchboard/Patchboard/src
 
 ################################################################################
 # PROJECT EXCLUSIONS
@@ -76,7 +76,7 @@
 # add a runtime path to search for those shared libraries, since they aren't 
 # incorporated directly into the final executable application binary.
 ################################################################################
-PROJECT_LDFLAGS=-Wl,-rpath=./libs,./bin/liblsl-1.14.0-manylinux2010_x64.so
+PROJECT_LDFLAGS=-Wl,-rpath=./libs,../../ofxLSL/libs/labstreaminglayer/lib/linux64/liblsl-1.14.0-manylinux2010_x64.so
 
 ################################################################################
 # PROJECT DEFINES

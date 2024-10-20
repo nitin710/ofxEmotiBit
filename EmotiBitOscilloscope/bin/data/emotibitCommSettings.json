@@ -1,16 +1,25 @@
 {
   "wifi": {
     "advertising": {
+      "sendAdvertisingInterval_msec": 1000, // Duration between sending advertising messages
+      "checkAdvertisingInterval_msec": 100, // Duration between checking for advertising responses
+      "threadSleep_usec": 1000, // Duration advertising thread sleeps between loops  
       "transmission": {
         "broadcast": {
           "enabled": true
         },
         "unicast": {
-          "enabled": false,
+          "enabled": true,
           "ipMax": 254,
-          "ipMin": 2
+          "ipMin": 2,
+          "nUnicastIpsPerLoop": 1,
+          "unicastMinLoopDelay_msec": 3
         }
       }
+    },
+    "data": {
+      // WARNING data threadSleep_usec alters timesync comms. Change with caution.
+      "threadSleep_usec": 100
     },
     "network": {
       "excludeList": [ "" ],
@@ -19,9 +28,8 @@
   },
   "lsl": {
     "marker": {
-      "name": "",
-      "sourceId": ""
+      "name": "DataSyncMarker",
+      "sourceId": "12345"
     }
   }
 }
-
