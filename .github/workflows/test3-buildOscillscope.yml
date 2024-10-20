@@ -19,7 +19,7 @@ jobs:
       - name: checkout repository
         uses: actions/checkout@v4  
       - name: move fresh clone to OF_ROOT
-        run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) /Users/cfl/dev/emotibit/software/of_v0.11.2_osx_release/addons
+        run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons
       - name: build using xcode
         working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
         run: |
