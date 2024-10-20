@@ -1,0 +1,24 @@
+name: clone to OF_ROOT
+on: [push]
+jobs:
+  CloneToOFroot:
+    runs-on: self-hosted
+    steps:
+      - name: removeExistingClone
+        working-directory: /Users/cfl/dev/emotibit/software/of_v0.11.2_osx_release/addons
+        run: |
+          pwd
+          #echo "the commit that dispatched this job-- ${GITHUB_SHA}"
+          if [ -d ofxEmotiBit ]; then
+            echo "Directory exists."
+            rm -rf ofxEmotiBit
+            echo "removin
+          else
+            echo "Directory does not already exist"
+          fi
+      - name: checkout repository
+        uses: actions/checkout@v4
+      - name: print current working directory
+        run: |
+          echo "current working directory" && pwd  
+      - run: echo "🍏 This job's status is ${{ job.status }}."
