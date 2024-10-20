@@ -19,7 +19,7 @@ jobs:
           mv EmotiBitOscilloscope/bin/EmotiBitOscilloscope-Debug.app stageRelease/EmotiBitSoftware-macos
           mv EmotiBitDataParser/bin/EmotiBitDataParserDebug.app stageRelease/EmotiBitSoftware-macos
           mv EmotiBitFirmwareInstaller/bin/EmotiBitFirmwareInstallerDebug.app stageRelease/EmotiBitSoftware-macos
-      - name: upload
+      - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: EmotiBitSoftware-macos
