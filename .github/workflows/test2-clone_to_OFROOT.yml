@@ -4,7 +4,7 @@ jobs:
   CloneToOFroot:
     runs-on: self-hosted
     steps:
-      - name: removeExistingClone
+      - name: remove existing clone
         working-directory: /Users/cfl/dev/emotibit/software/of_v0.11.2_osx_release/addons
         run: |
           pwd
@@ -12,7 +12,7 @@ jobs:
           if [ -d ofxEmotiBit ]; then
             echo "Directory exists."
             rm -rf ofxEmotiBit
-            echo "removin
+            echo "clode removed"
           else
             echo "Directory does not already exist"
           fi
