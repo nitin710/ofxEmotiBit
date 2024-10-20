@@ -22,5 +22,5 @@ jobs:
         run: |
           echo "current working directory" && pwd  
       - name: move fresh clone to OF_ROOT
-        run: cp -r ../${{ github.repository }} /Users/cfl/dev/emotibit/software/of_v0.11.2_osx_release/addons
+        run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) /Users/cfl/dev/emotibit/software/of_v0.11.2_osx_release/addons
       - run: echo "🍏 This job's status is ${{ job.status }}."
