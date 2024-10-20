@@ -12,7 +12,9 @@ jobs:
         working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
         run: |
           ls -al EmotiBitOscilloscope/bin
-          la -al
+          sleep 10
+          ls -al EmotiBitOscilloscope/bin
+          ls -al
           mkdir -p stageRelease/EmotiBitSoftware-macos
           ls -al
           mv EmotiBitOscilloscope/bin/EmotiBitOscilloscope-Debug stageRelease/EmotiBitSoftware-macos
