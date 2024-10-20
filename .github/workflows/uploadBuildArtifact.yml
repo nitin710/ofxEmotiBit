@@ -14,8 +14,7 @@ jobs:
           mkdir -p stageRelease/EmotiBitSoftware-macos
           mv EmotiBitOscillosocpe/bin/EmotiBitOscilloscope-Debug stageRelease/EmotiBitSoftware-macos
       - name: upload
-        working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
-      - uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
           name: EmotiBitSoftware-macos
-          path: stageRelease/EmotiBitSoftware-macos/
+          path: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit/stageRelease/EmotiBitSoftware-macos/
