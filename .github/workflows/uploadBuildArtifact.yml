@@ -1,7 +1,7 @@
 name: upload artifact
 on: 
   workflow_run:
-    workflows: ["Build Oscilloscope"]
+    workflows: ["Build all software"]
     types:
       - completed
 jobs:
@@ -13,7 +13,12 @@ jobs:
         run: |
           ls -al EmotiBitOscilloscope/bin
           mkdir -p stageRelease/EmotiBitSoftware-macos
+      - name: populate stage release
+        working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
+        run: |
           mv EmotiBitOscilloscope/bin/EmotiBitOscilloscope-Debug.app stageRelease/EmotiBitSoftware-macos
+          mv EmotiBitDataParser/bin/EmotiBitDataParserDebug.app stageRelease/EmotiBitSoftware-macos
+          mv EmotiBitFirmwareInstaller/bin/EmotiBitFirmwareInstallerDebug.app stageRelease/EmotiBitSoftware-macos
       - name: upload
         uses: actions/upload-artifact@v4
         with:
