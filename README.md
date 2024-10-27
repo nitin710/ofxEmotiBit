@@ -1,4 +1,4 @@
-# ofxEmotiBit
+# ofxEmotiBit (forked)
 Software code for the EmotiBit. 
 If you just want to visualize and parse data from the EmotiBit (for Windows/ macOS), you can simply download the software directly in [releases](https://github.com/EmotiBit/ofxEmotiBit/releases).
 
