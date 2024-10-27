@@ -1,6 +1,9 @@
 name: upload artifact
 on: 
-  push:
+  workflow_run:
+    workflows: ["Build all software"]
+    types:
+      - completed
     branches:
       [dev]
 jobs:
