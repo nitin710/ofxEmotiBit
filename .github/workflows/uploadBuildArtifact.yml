@@ -1,24 +1,21 @@
 name: upload artifact
 on: 
-  workflow_run:
-    workflows: ["Build all software"]
-    types:
-      - completed
+  push:
+    branches:
+      [dev]
 jobs:
   upload-artifact:
     runs-on: self-hosted
     steps:
       - name: create stage-release
         working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
-        run: |
-          ls -al EmotiBitOscilloscope/bin
-          mkdir -p stageRelease/EmotiBitSoftware-macos
+        run: mkdir -p stageRelease/EmotiBitSoftware-macos
       - name: populate stage release
         working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
         run: |
-          mv EmotiBitOscilloscope/bin/EmotiBitOscilloscope-Debug.app stageRelease/EmotiBitSoftware-macos
-          mv EmotiBitDataParser/bin/EmotiBitDataParserDebug.app stageRelease/EmotiBitSoftware-macos
-          mv EmotiBitFirmwareInstaller/bin/EmotiBitFirmwareInstallerDebug.app stageRelease/EmotiBitSoftware-macos
+          mv EmotiBitOscilloscope/bin/EmotiBitOscilloscope.app stageRelease/EmotiBitSoftware-macos
+          mv EmotiBitDataParser/bin/EmotiBitDataParser.app stageRelease/EmotiBitSoftware-macos
+          mv EmotiBitFirmwareInstaller/bin/EmotiBitFirmwareInstaller.app stageRelease/EmotiBitSoftware-macos
       - name: upload artifact
         uses: actions/upload-artifact@v4
         with:
