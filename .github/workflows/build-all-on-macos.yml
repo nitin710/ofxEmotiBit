@@ -1,4 +1,4 @@
-name: Build all software
+name: Build all on macos
 on: [push]
 jobs:
   clone-to-OF_ROOT:
