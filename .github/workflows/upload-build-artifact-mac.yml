@@ -8,7 +8,7 @@ on:
       [dev]
 jobs:
   upload-artifact:
-    runs-on: self-hosted
+    runs-on: [self-hosted, macOS]
     environment: RUNNER-MACOS
     steps:
       - name: create stage-release
