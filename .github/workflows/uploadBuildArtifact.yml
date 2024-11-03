@@ -1,7 +1,7 @@
 name: upload artifact
 on: 
   workflow_run:
-    workflows: ["Build all software"]
+    workflows: ["Build all on macos"]
     types:
       - completed
     branches:
