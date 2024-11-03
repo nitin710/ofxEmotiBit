@@ -1,12 +1,11 @@
-name: Build all on macos
+name: Build all on linux
 on: [push]
 jobs:
   clone-to-OF_ROOT:
-    runs-on: [self-hosted, macOS]
-    environment: RUNNER-MACOS
+    runs-on: [self-hosted, linux]
+    environment: RUNNER-LINUX
     steps:
       - name: remove existing clone
-        #working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons
         working-directory: ${{ vars.ADDONS_DIR }}
         run: |
           pwd
@@ -24,35 +23,34 @@ jobs:
         run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.ADDONS_DIR }}
   build-oscilloscope:
     needs: clone-to-OF_ROOT
-    runs-on: [self-hosted, macOS]
-    environment: RUNNER-MACOS
+    runs-on: [self-hosted, linux]
+    environment: RUNNER-LINUX
     steps: 
-      - name: build using xcode
-        #working-directory: /Users/cfl/dev/emotibit/software/deploy/of_v0.11.2_osx_release/addons/ofxEmotiBit
+      - name: build using make
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
           echo "current working directory" && pwd
           cd EmotiBitOscilloscope
-          xcodebuild -project EmotiBitOscilloscope.xcodeproj -scheme Release-x86_64
+          make
   build-dataparser:
     needs: clone-to-OF_ROOT
-    runs-on: [self-hosted, macOS]
-    environment: RUNNER-MACOS
+    runs-on: [self-hosted, linux]
+    environment: RUNNER-LINUX
     steps: 
-      - name: build using xcode
+      - name: build using make
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
           echo "current working directory" && pwd
           cd EmotiBitDataParser
-          xcodebuild -project EmotiBitDataParser.xcodeproj -scheme Release
+          make
   build-firmwareinstaller:
     needs: clone-to-OF_ROOT
-    runs-on: [self-hosted, macOS]
-    environment: RUNNER-MACOS
+    runs-on: [self-hosted, linux]
+    environment: RUNNER-LINUX
     steps: 
-      - name: build using xcode
+      - name: build using make
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
           echo "current working directory" && pwd
           cd EmotiBitFirmwareInstaller
-          xcodebuild -project EmotiBitFirmwareInstaller.xcodeproj -scheme Release
+          make
