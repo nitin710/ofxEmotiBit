@@ -1,4 +1,4 @@
-name: upload artifact
+name: upload build artifact mac
 on: 
   workflow_run:
     workflows: ["Build all on macos"]
