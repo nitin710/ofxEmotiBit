@@ -2,7 +2,7 @@ name: Build all on macos
 on: [push]
 jobs:
   clone-to-OF_ROOT:
-    runs-on: self-hosted
+    runs-on: [self-hosted, macOS]
     environment: RUNNER-MACOS
     steps:
       - name: remove existing clone
