@@ -37,6 +37,7 @@ jobs:
   build-dataparser:
     needs: clone-to-OF_ROOT
     runs-on: self-hosted
+    environment: RUNNER-MACOS
     steps: 
       - name: build using xcode
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
@@ -47,6 +48,7 @@ jobs:
   build-firmwareinstaller:
     needs: clone-to-OF_ROOT
     runs-on: self-hosted
+    environment: RUNNER-MACOS
     steps: 
       - name: build using xcode
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
