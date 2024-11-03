@@ -21,7 +21,7 @@ jobs:
       - name: checkout repository
         uses: actions/checkout@v4  
       - name: move fresh clone to OF_ROOT
-        run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.WORKING_DIR }}
+        run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.ADDONS_DIR }}
   build-oscilloscope:
     needs: clone-to-OF_ROOT
     runs-on: self-hosted
