@@ -1,12 +1,13 @@
 name: upload build artifact Windows
-on: 
-  workflow_dispatch:
-  # workflow_run:
-  #   workflows: ["Build all on Windows"]
-  #   types:
-  #     - completed
-  #   branches:
-  #     [dev]
+on:
+   
+  #workflow_dispatch:
+  workflow_run:
+    workflows: ["Build all on Windows"]
+    types:
+     - completed
+    branches:
+     [dev]
 jobs:
   build-installer:
     runs-on: [self-hosted, Windows]
