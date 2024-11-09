@@ -42,7 +42,6 @@ jobs:
           if [ -f "$msiInstPath" ] || [ -f "$setupPath" ]; then
             echo "msi and exe files found!"
             echo "staging release"
-            mkdir "./stageRelease/$releaseFolder"
             echo "copying installer files"
             cp "$msiInstPath" "./stageRelease/$releaseFolder"
             cp "$setupPath" "./stageRelease/$releaseFolder"
