@@ -2,7 +2,7 @@ name: Build all on linux
 on: [push]
 jobs:
   clone-to-OF_ROOT:
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, Linux]
     environment: RUNNER-LINUX
     steps:
       - name: remove existing clone
@@ -23,7 +23,7 @@ jobs:
         run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.ADDONS_DIR }}
   build-oscilloscope:
     needs: clone-to-OF_ROOT
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, Linux]
     environment: RUNNER-LINUX
     steps: 
       - name: build using make
@@ -34,7 +34,7 @@ jobs:
           make
   build-dataparser:
     needs: clone-to-OF_ROOT
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, Linux]
     environment: RUNNER-LINUX
     steps: 
       - name: build using make
@@ -42,15 +42,4 @@ jobs:
         run: |
           echo "current working directory" && pwd
           cd EmotiBitDataParser
-          make
-  build-firmwareinstaller:
-    needs: clone-to-OF_ROOT
-    runs-on: [self-hosted, linux]
-    environment: RUNNER-LINUX
-    steps: 
-      - name: build using make
-        working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
-        run: |
-          echo "current working directory" && pwd
-          cd EmotiBitFirmwareInstaller
           make
