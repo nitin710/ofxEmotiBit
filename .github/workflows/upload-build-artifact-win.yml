@@ -13,7 +13,7 @@ jobs:
     environment: RUNNER-WINDOWS
     steps:
       - name: build installer project
-        shell: bash
+        shell: cmd
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
           cd EmotiBitInstaller
