@@ -6,7 +6,7 @@ jobs:
     environment: RUNNER-WINDOWS
     steps:
       - name: remove existing clone
-        shell: bash.exe
+        shell: C:\Program Files\Git\bin\bash.exe
         working-directory: ${{ vars.ADDONS_DIR }}
         run: |
           pwd
@@ -21,7 +21,7 @@ jobs:
       - name: checkout repository
         uses: actions/checkout@v4  
       - name: move fresh clone to OF_ROOT
-        shell: bash.exe
+        shell: C:\Program Files\Git\bin\bash.exe
         run: cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.ADDONS_DIR }}
   build-oscilloscope:
     needs: clone-to-OF_ROOT
