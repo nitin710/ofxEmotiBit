@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           echo ${{ github.repository }} | cut -d '/' -f 2
-          cp -r ../$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.ADDONS_DIR }}
+          cp -r ..\\$(echo ${{ github.repository }} | cut -d '/' -f 2) C:\\dev\\emotibit\\sw-deploy\\of_v0.11.2_vs2017_release\\addons
   build-oscilloscope:
     needs: clone-to-OF_ROOT
     runs-on: [self-hosted, Windows]
