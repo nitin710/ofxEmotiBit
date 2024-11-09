@@ -24,13 +24,13 @@ jobs:
         shell: bash
         run: |
           echo ${{ github.repository }} | cut -d '/' -f 2
-          cp -r ..\\$(echo ${{ github.repository }} | cut -d '/' -f 2) C:\\dev\\emotibit\\sw-deploy\\of_v0.11.2_vs2017_release\\addons
+          cp -r ..\\$(echo ${{ github.repository }} | cut -d '/' -f 2) ${{ vars.ADDONS_DIR }}
   build-oscilloscope:
     needs: clone-to-OF_ROOT
     runs-on: [self-hosted, Windows]
     environment: RUNNER-WINDOWS
     steps: 
-      - name: build using make
+      - name: build using MSBuild
         shell: cmd
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
@@ -42,7 +42,7 @@ jobs:
     runs-on: [self-hosted, Windows]
     environment: RUNNER-WINDOWS
     steps: 
-      - name: build using make
+      - name: build using MSBuild
         shell: cmd
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
@@ -54,7 +54,7 @@ jobs:
     runs-on: [self-hosted, Windows]
     environment: RUNNER-WINDOWS
     steps: 
-      - name: build using make
+      - name: build using MSBuild
         shell: cmd
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
