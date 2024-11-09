@@ -47,7 +47,7 @@ jobs:
             cp "$setupPath" "./stageRelease/$releaseFolder"
             for i in $(find ../../../drivers -maxdepth 1 -mindepth 1 -name '*CP210x*' -type d); do
               dirname=$(basename "$i")
-              worktree="$PWD/drivers/$dirname"
+              worktree="../../../drivers/$dirname"
               echo "copying $dirname"
               cp -r "$worktree" "./stageRelease/$releaseFolder"
             done
