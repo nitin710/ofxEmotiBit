@@ -17,7 +17,7 @@ jobs:
         working-directory: ${{ vars.OFXEMOTIBIT_DIR }}
         run: |
           cd EmotiBitInstaller
-          MSBuild EmotiBitInstaller.sln -t:Build -p:Configuration=Release 
+          devenv EmotiBitInstaller.sln /Build Release 
 
   upload-artifact:
     needs: build-installer
